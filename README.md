@@ -1,168 +1,92 @@
-# ESN Gent Events 🎉
+# ESN Gent App
 
-A ticket shop + event calendar for ESN Gent, designed to live on a subdomain of
-esngent.org (e.g. `events.esngent.org`). Styled with the official ESN colour
-palette (cyan / magenta / green / orange / dark blue) and the Lato font, so it
-matches the main site.
+The event, ticketing & membership platform of **ESN Gent** — built for ~1,500 international students per year.
 
-**What it does**
+**Live:** https://app.esngent.org · Current version: **v0.124-beta**
 
-- Public event listing + month-view calendar (like esngent.org/calendar)
-- Paid tickets via **Stripe Checkout** (secure, server-side) and free-event registration
-- "Add to Google Calendar" + downloadable `.ics` file per event
-- **User accounts** (Google sign-in) with a "My tickets" page listing all their transactions
-- **Admin panel**: create/edit/publish events, set price & capacity, see all
-  registrations per event with revenue stats, export CSV
+## What it does
 
-**Stack**: Firebase Hosting (static site, no build step) + Firebase Auth +
-Firestore + Cloud Functions (2nd gen) + Stripe. At student-org volume this runs
-at effectively €0/month, but Cloud Functions require the **Blaze**
-(pay-as-you-go) plan, which needs a card on file.
+**For students**
+- Browse & book events, pay online (Stripe) or use member prices with a verified ESNcard
+- QR tickets with live check-in status, ticket transfers, waitlists & refund requests
+- ESNcard application, payment & digital card replica with barcode
+- **ESN Passport**: stamps per attended event, visas per event category, levels & XP, badges (incl. secret ones), country league, shareable passport card
+- Ghent guide & bucketlist, Cantus codex, ESNcard partner deals, push notifications, offline-capable PWA, personal calendar subscription
 
----
+**For the board**
+- Event management with venue presets, tag system (each tag linked to an ESN cause + DSA activity type), shiftlist templates, cash registers, per-event stats & feedback digests
+- Automatic sync to **Google Calendar** and to the UGent activities site (**dsa.ugent.be**) — create/update/remove follows the event; board meetings & office hours included; room reservations shown on the board page
+- ESNcard pipeline (apply → pay → verify → pickup), user management with audit history, partnership follow-up (statuses, contacts, contracts), reimbursements with finance approval, board meetings with minutes, to-dos, shiftlists, insights & analytics, friendship tree
+- AI helper "Jacob" (Gemini) for event descriptions, feedback digests & meeting recaps
 
-## 1. Create the Firebase project
+## Tech stack
 
-1. Go to https://console.firebase.google.com → **Add project** (e.g. `esngent-events`).
-2. In **Build → Authentication → Sign-in method**, enable **Google**.
-3. In **Build → Firestore Database**, click **Create database** → production mode → choose `europe-west1` (Belgium).
-4. In **Project settings → General → Your apps**, add a **Web app** (`</>` icon). Copy the config object it shows you.
-5. Upgrade the project to the **Blaze plan** (⚙️ next to "Spark plan" bottom-left, or Project settings → Usage and billing).
+- **Frontend:** vanilla JS single-page app (`public/app.js`) — no build step, Firebase v10 CDN modules, clean URLs, service-worker PWA
+- **Backend:** Firebase — Hosting, Firestore, Cloud Functions (2nd gen, Node 20), Storage, Cloud Messaging, Auth (**Google sign-in only**)
+- **Payments:** Stripe Checkout + webhooks (currently **TEST mode**)
+- **Integrations:** Google Calendar API, UGent DSA API, Gemini, SMTP mail
 
-## 2. Configure this project
+## Repository layout
 
-1. Open `.firebaserc` and replace `YOUR-FIREBASE-PROJECT-ID` with your project ID.
-2. Open `public/config.js` and paste your web app config values (apiKey, authDomain, projectId, …).
+```
+public/                  the whole frontend
+  index.html             app shell (og tags for events come from a function)
+  app.js                 the entire SPA (~750 KB, deliberately one file)
+  styles.css             all styling, light/dark aware
+  sw.js                  service worker (bump CACHE on every release)
+  config.js              Firebase web config (client-visible, not secret)
+functions/
+  index.js               all Cloud Functions (Stripe, mails, calendar & DSA sync,
+                         push, nightly maintenance, callables)
+firebase.json            hosting rewrites — ORDER MATTERS (/event/** before **)
+firestore.rules          security rules (identical to firestore.rules.blaze)
+firestore.indexes.json   composite indexes — the ROOT file is the only one deployed
+storage.rules            Storage rules (images, proof PDFs)
+```
 
-## 3. Install the Firebase CLI and deploy Firestore + Hosting
+## Running & deploying
+
+Requirements: `firebase-tools` CLI, access to the Firebase project `esn-gent-9084b`.
 
 ```bash
-npm install -g firebase-tools
 firebase login
-cd esn-events
-firebase deploy --only firestore,hosting
+firebase use esn-gent-9084b
+
+# frontend + functions
+firebase deploy --only functions,hosting
+
+# include rules / indexes only when they changed
+firebase deploy --only functions,hosting,firestore,storage
 ```
 
-Your site is now live at `https://YOUR-PROJECT-ID.web.app`. (Events won't load
-payments yet — functions come next.)
+Server secrets live in **Firebase Secret Manager**, never in this repo:
 
-## 4. Stripe setup
-
-1. Create an account at https://stripe.com (choose Belgium, activate the account for live payments — test mode works immediately).
-2. In the Stripe dashboard → **Developers → API keys**, copy the **Secret key** (`sk_test_...` for testing).
-3. Set it as a secret and deploy the functions:
-
-```bash
-firebase functions:secrets:set STRIPE_SECRET_KEY
-# paste the sk_... key when prompted
-cd functions && npm install && cd ..
-firebase deploy --only functions
+```
+STRIPE_SECRET_KEY   STRIPE_WEBHOOK_SECRET   GEMINI_API_KEY   SMTP_PASSWORD   DSA_API_KEY
 ```
 
-4. The deploy output prints the URL of `stripeWebhook` (looks like
-   `https://stripewebhook-xxxxx-uc.a.run.app` or
-   `https://us-central1-YOUR-PROJECT-ID.cloudfunctions.net/stripeWebhook`).
-5. In Stripe → **Developers → Webhooks → Add endpoint**, paste that URL and
-   subscribe to the events `checkout.session.completed` and
-   `checkout.session.expired`.
-6. Copy the webhook **Signing secret** (`whsec_...`) and set it, then redeploy:
+Set one with `firebase functions:secrets:set NAME`, then redeploy functions.
 
-```bash
-firebase functions:secrets:set STRIPE_WEBHOOK_SECRET
-firebase deploy --only functions
-```
+## Conventions that must not break
 
-> Note: menu names in the Stripe dashboard change occasionally — if you don't
-> find "Developers → Webhooks", search for "webhooks" in the dashboard search bar.
+- `firestore.rules` and `firestore.rules.blaze` are kept **identical** — edit one, copy to the other.
+- `firestore.indexes.json` in the repo **root** is the deployed one; never keep a second copy under `functions/`.
+- Bump `APP_VERSION` (app.js) **and** the `CACHE` name (sw.js) together on every release, and add a changelog entry.
+- Native `alert/confirm/prompt` are forbidden — use `appAlert/appConfirm/appPrompt`.
+- Ticket/counter fields on events & registrations (`ticketsSold`, `pendingHold*`, `stripeSession*`, `firstIn`, `lastIn`, `dsaActivityId`, …) are maintained by the functions — never edit them by hand.
+- Users' IBANs are never stored on user docs; ESNcard codes & expiry are immutable for users.
+- DSA sync: activities lock at their start time; the activity type comes from the event's tags; team events push as private "Vergadering"/non-public.
 
-## 5. Make yourself admin
+## Domains & services
 
-1. Sign in on your live site once with Google (so your account exists).
-2. Firebase console → **Authentication → Users** → copy your **User UID**.
-3. Firebase console → **Firestore Database** → **Start collection** →
-   Collection ID: `admins` → Document ID: *paste your UID* → add a field
-   `email` (string) with your email → Save.
-4. Refresh the site — an **Admin** item appears in the menu.
-
-Security rules only allow admin management from the console, so nobody can
-make themselves admin through the site.
-
-## 6. Create your first event
-
-Admin → **+ New event**. Price `0` = free event (users register directly);
-any other price uses Stripe Checkout. Tick **Published** to make it visible.
-
-**Test a payment** with Stripe test mode using card number `4242 4242 4242 4242`,
-any future expiry date and any CVC. When it works, swap the test keys for live
-keys (repeat step 4 with `sk_live_...` and a live-mode webhook endpoint).
-
-## 7. Connect the subdomain (events.esngent.org)
-
-1. Firebase console → **Hosting → Add custom domain** → enter `events.esngent.org`.
-2. Firebase shows you DNS records (usually A records, sometimes a TXT record for
-   verification). Whoever manages DNS for `esngent.org` adds those records.
-3. Wait for verification; Firebase provisions a free SSL certificate automatically.
-4. **Important:** add the new domain in **Authentication → Settings →
-   Authorized domains**, otherwise Google sign-in will be blocked on it.
+| What | Where |
+|---|---|
+| App | https://app.esngent.org (events.esngent.org redirects) |
+| University activities | https://dsa.ugent.be (association `esn`) |
+| Forms | https://forms.esngent.org (Tally, separate) |
+| Payments | Stripe dashboard |
+| Backups | Firestore PITR + scheduled exports |
 
 ---
 
-## How payments stay secure
-
-- The browser never touches your Stripe secret key. It calls the
-  `createCheckoutSession` Cloud Function, which validates the event, price and
-  capacity **server-side** and redirects the user to Stripe's hosted checkout.
-- Payment confirmation comes **only** from Stripe's signed webhook — a user
-  cannot mark their own ticket as paid. Firestore rules block all client writes
-  to `registrations`.
-- Abandoned checkouts expire after 30 minutes and their pending registrations
-  are cleaned up automatically.
-
-## Data model (Firestore)
-
-| Collection | Doc contents |
-|---|---|
-| `events` | title, description, location, start/end (timestamp), price (cents), currency, capacity, ticketsSold, published, createdAt |
-| `registrations` | eventId, eventTitle, uid, name, email, quantity, amountTotal (cents), currency, status (`pending`/`paid`/`free`), stripeSessionId, createdAt |
-| `admins` | one doc per admin, doc ID = Firebase Auth UID |
-
-## Costs (worth verifying against current pricing)
-
-Firebase's free tier includes generous Hosting, Firestore and Functions quotas
-that a student organisation is very unlikely to exceed; you'd typically pay €0.
-Stripe charges a per-transaction fee (for European cards this has been around
-1.5% + €0.25, but **check https://stripe.com/pricing for current rates**).
-Consider building the Stripe fee into your ticket prices.
-
-## Troubleshooting
-
-- **"Could not load events"** → `public/config.js` still has placeholder values,
-  or Firestore isn't created yet.
-- **Query errors mentioning an index** → run `firebase deploy --only firestore`
-  (deploys `firestore.indexes.json`) and wait a few minutes, or click the link
-  in the browser-console error to auto-create the index.
-- **Google sign-in popup fails on the custom domain** → add the domain to
-  Authentication → Authorized domains (step 7.4).
-- **Payments succeed but tickets stay "pending"** → the webhook isn't reaching
-  the function: check the endpoint URL, that both events are subscribed, and
-  that `STRIPE_WEBHOOK_SECRET` matches the endpoint's signing secret.
-- **Functions deploy fails on the Spark plan** → the project must be on Blaze.
-
-## File map
-
-```
-esn-events/
-├── firebase.json            Hosting + Firestore + Functions config
-├── .firebaserc              ← put your project ID here
-├── firestore.rules          Security rules
-├── firestore.indexes.json   Composite indexes for the queries the app uses
-├── public/                  The website (no build step needed)
-│   ├── index.html
-│   ├── styles.css           ESN-branded styles
-│   ├── app.js               All app logic (SPA with hash routing)
-│   ├── config.js            ← paste your Firebase web config here
-│   └── star.svg             Logo
-└── functions/
-    ├── index.js             Stripe checkout, webhook, free registration
-    └── package.json
-```
+Maintained by the ESN Gent board · esn.gent@gmail.com
