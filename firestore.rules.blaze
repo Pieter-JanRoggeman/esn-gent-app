@@ -1,0 +1,604 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // ---- Roles ----------------------------------------------------
+    // admins/{uid} docs carry { role: 'superadmin' | 'board' | 'volunteer' }.
+    // Docs created before roles existed have no role field and are treated
+    // as superadmin (the original esn.gent account).
+    function hasStaffRole() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+    function staffRole() {
+      return get(/databases/$(database)/documents/admins/$(request.auth.uid))
+        .data.get('role', 'superadmin');
+    }
+    function isBoard() {
+      return hasStaffRole() && staffRole() in ['board', 'superadmin', 'finance'];
+    }
+    // Finance safeguard: only the finance role (treasurer/president) and
+    // the superadmin may read IBANs and manage reimbursements.
+    function isFinance() {
+      return hasStaffRole() && staffRole() in ['finance', 'superadmin'];
+    }
+    function isSuper() {
+      return hasStaffRole() && staffRole() == 'superadmin';
+    }
+    // Working staff who scan tickets at the door. Advisory board members
+    // are deliberately excluded — they see meetings, not attendee data.
+    function isScanner() {
+      return hasStaffRole() && staffRole() in ['superadmin', 'board', 'finance', 'volunteer'];
+    }
+    // Access to the board-meetings space (AB + alumni coordinator may
+    // attend the AV per the statutes, Art. 10 §5 / Art. 7 §8).
+    function isMeetings() {
+      return hasStaffRole() && staffRole() in ['superadmin', 'board', 'finance', 'advisory', 'alumnicoord'];
+    }
+
+    function eventData(eid) {
+      return get(/databases/$(database)/documents/events/$(eid)).data;
+    }
+
+    function myProfile() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    // Events: anyone can read published events; board manages them.
+    // Team members may also see DRAFT events that already have a
+    // shiftlist (so volunteers can sign up before publication).
+    match /events/{eventId} {
+      allow read: if resource.data.published == true || isBoard()
+        || (hasStaffRole() && resource.data.hasShifts == true);
+      allow create, update, delete: if isBoard();
+    }
+
+    // Registrations.
+    //  - get  (single doc, e.g. door check-in): any staff member.
+    //  - list (querying the collection): board only — so a volunteer can
+    //    scan a ticket by id but cannot enumerate all attendees' emails.
+    match /registrations/{regId} {
+      allow get: if isScanner()
+        || (isSignedIn() && resource.data.uid == request.auth.uid);
+      allow list: if isBoard()
+        || (isSignedIn() && resource.data.uid == request.auth.uid);
+
+      // (Spark-era direct free-registration rule removed — registrations
+      // are now created exclusively by the Cloud Functions.)
+
+      // Scanning staff (incl. volunteers, excl. advisory) may check
+      // tickets in — only that field, and only to a real timestamp
+      // (no un-checking, no garbage values). (S4 tightened pre-launch)
+      allow update: if isScanner()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['checkedInAt'])
+        && request.resource.data.checkedInAt is timestamp;
+      // GDPR: a user may anonymize their own registrations (account deletion).
+      allow update: if isSignedIn() && resource.data.uid == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'email', 'anonymized']);
+
+      // Ticket transfer, step 1: the owner arms (or cancels) a transfer on
+      // an unused, confirmed ticket by setting/clearing a secret code.
+      allow update: if isSignedIn() && resource.data.uid == request.auth.uid
+        && resource.data.status in ['paid', 'free']
+        && resource.data.get('checkedInAt', null) == null
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['transferCode']);
+
+      // Ticket transfer, step 2: the recipient claims it by proving they
+      // know the code (from the link) — without ever being able to read
+      // the ticket first. The claim must move the ticket to themselves,
+      // consume the code, and (for ESNcard-only events) they must hold a
+      // verified card.
+      allow update: if isSignedIn()
+        && resource.data.get('transferCode', '') != ''
+        && request.resource.data.get('claimedWith', '') == resource.data.transferCode
+        && request.resource.data.transferCode == ''
+        && request.resource.data.uid == request.auth.uid
+        && resource.data.status in ['paid', 'free']
+        && resource.data.get('checkedInAt', null) == null
+        && (eventData(resource.data.eventId).get('esnOnly', false) != true
+            || myProfile().get('esncardVerified', false) == true
+            || myProfile().get('alumni', false) == true)
+        && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['uid', 'name', 'email', 'transferCode', 'claimedWith', 'transferredAt']);
+
+      // Self-cancel: own FREE registrations until 2 hours before the event.
+      // Board can always remove a registration.
+      allow delete: if isBoard()
+        || (isSignedIn() && resource.data.uid == request.auth.uid
+            && resource.data.status == 'free'
+            && eventData(resource.data.eventId).start > request.time
+               + duration.value(eventData(resource.data.eventId).get('cancelHours', 2), 'h'));
+    }
+
+    // Merch shop: products are public when published; board manages them.
+    match /products/{productId} {
+      allow read: if resource.data.published == true || isBoard();
+      allow create, update, delete: if isBoard();
+    }
+
+    // Merch orders (pickup only). Users may reserve for themselves
+    // (pay at pickup); paid/pickup status changes are board-only.
+    match /merchOrders/{orderId} {
+      // scanning staff may read (desk pickup scanning)
+      allow read: if isScanner() || (isSignedIn() && resource.data.uid == request.auth.uid);
+      allow create: if isSignedIn()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.status == 'requested'
+        && request.resource.data.quantity is int
+        && request.resource.data.quantity >= 1
+        && request.resource.data.quantity <= 10;
+      allow update: if isBoard();
+      // desk duty: scanning staff may mark paid-at-pickup and hand-over, nothing else
+      allow update: if isScanner()
+        && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['status', 'paidAt', 'pickedUpAt'])
+        && request.resource.data.status in ['requested', 'paid'];
+      allow delete: if isBoard()
+        || (isSignedIn() && resource.data.uid == request.auth.uid
+            && resource.data.status == 'requested');
+    }
+
+    // Event feedback: one per registration (doc id = registration id),
+    // only from people who were actually checked in.
+    match /feedback/{regId} {
+      allow read: if isBoard() || (isSignedIn() && resource.data.uid == request.auth.uid);
+      allow create: if isSignedIn()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.rating is int
+        && request.resource.data.rating >= 1 && request.resource.data.rating <= 5
+        && get(/databases/$(database)/documents/registrations/$(regId)).data.uid == request.auth.uid
+        && get(/databases/$(database)/documents/registrations/$(regId)).data.get('checkedInAt', null) != null;
+      allow update: if isSignedIn() && resource.data.uid == request.auth.uid
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.rating is int
+        && request.resource.data.rating >= 1 && request.resource.data.rating <= 5;
+      allow delete: if isBoard();
+    }
+
+    // Waitlist for sold-out events.
+    match /waitlist/{entryId} {
+      allow read: if isBoard() || (isSignedIn() && resource.data.uid == request.auth.uid);
+      allow create: if isSignedIn()
+        && request.resource.data.uid == request.auth.uid
+        && eventData(request.resource.data.eventId).published == true
+        // 24h spot-holds (offeredAt/offerExpiresAt) are set by the server only
+        && !("offerExpiresAt" in request.resource.data)
+        && !("offeredAt" in request.resource.data);
+      allow delete: if isBoard() || (isSignedIn() && resource.data.uid == request.auth.uid);
+      allow update: if false;
+    }
+
+    // User profiles. Users manage their own but can NEVER set
+    // esncardVerified or the alumni flag themselves — board only.
+    // The friendship-tree circle (v0.104): board roles, the alumni
+    // coordinator, and everyone flagged alumni on their profile.
+    function isFriendCircle() {
+      return isBoard()
+        || (hasStaffRole() && staffRole() == 'alumnicoord')
+        || (isSignedIn()
+            && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('alumni', false) == true);
+    }
+
+    match /users/{uid} {
+      allow read: if isSignedIn() && (request.auth.uid == uid || isBoard());
+      // Friendship-tree people picker: the circle may LIST alumni profiles
+      // (only queries filtered to alumni == true match this rule).
+      allow list: if isFriendCircle() && resource.data.alumni == true;
+      allow write: if isBoard();
+      allow create: if isSignedIn() && request.auth.uid == uid
+        && request.resource.data.get('esncardVerified', false) == false
+        && request.resource.data.get('alumni', false) == false;
+      allow update: if isSignedIn() && request.auth.uid == uid
+        && request.resource.data.get('esncardVerified', false)
+           == resource.data.get('esncardVerified', false)
+        && request.resource.data.get('alumni', false)
+           == resource.data.get('alumni', false)
+        // card number & expiry only via the board or the linkEsncard function
+        // (uniqueness is enforced server-side there)
+        && request.resource.data.get('esncardCode', '')
+           == resource.data.get('esncardCode', '')
+        && request.resource.data.get('esncardExpiresAt', null)
+           == resource.data.get('esncardExpiresAt', null)
+        // IBANs never belong on the profile doc — every board member can
+        // read users, only finance may see IBANs. (S1 closed pre-launch)
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['iban']);
+      // GDPR: users may delete their own profile.
+      allow delete: if isBoard() || (isSignedIn() && request.auth.uid == uid);
+    }
+
+    // ESNcard orders — LEGACY collection (replaced by esncardApplications).
+    // No new docs can be created; reads/deletes stay for old data + the
+    // GDPR account-deletion flow. (S5 closed pre-launch)
+    match /esncardOrders/{orderId} {
+      allow read: if isBoard() || (isSignedIn() && resource.data.uid == request.auth.uid);
+      allow create, update: if false;
+      allow delete: if isBoard() || (isSignedIn() && resource.data.uid == request.auth.uid);
+    }
+
+    // ESNcard applications: one per user (doc id = uid). Students create
+    // and may edit while still 'applied'; payment/card-number/activation
+    // changes are board-only.
+    match /esncardApplications/{uid} {
+      allow read: if isBoard() || (isSignedIn() && request.auth.uid == uid);
+      allow create: if isSignedIn() && request.auth.uid == uid
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.status == 'applied'
+        && request.resource.data.privacyAccepted == true;
+      allow update: if isBoard();
+      allow update: if isSignedIn() && request.auth.uid == uid
+        && resource.data.status in ['applied', 'rejected']
+        && request.resource.data.status == 'applied'
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.privacyAccepted == true;
+      // Renewal: an active card whose expiry has passed can be re-applied for
+      allow update: if isSignedIn() && request.auth.uid == uid
+        && resource.data.status == 'active'
+        && 'expiresAt' in resource.data && resource.data.expiresAt < request.time
+        && request.resource.data.status == 'applied'
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.privacyAccepted == true;
+      // GDPR: withdraw an unpaid/declined application; board can always clean up
+      allow delete: if isBoard()
+        || (isSignedIn() && request.auth.uid == uid && resource.data.status in ['applied', 'rejected']);
+    }
+
+    // Proof-of-exchange photos, stored apart from the application so the
+    // board's list views don't download every photo. Owner writes their
+    // own; board can view; owner or board can delete (GDPR).
+    match /applicationProofs/{uid} {
+      allow read: if isBoard() || (isSignedIn() && request.auth.uid == uid);
+      allow create, update: if isSignedIn() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['image', 'updatedAt']);
+      allow delete: if isBoard() || (isSignedIn() && request.auth.uid == uid);
+    }
+
+    // Board meetings: attendance, function rounds, event notes and minutes.
+    // Readable by board + superadmin + advisory board; board/superadmin
+    // write. Students can NEVER read or write these.
+    match /boardMeetings/{meetingId} {
+      allow read: if isMeetings();
+      allow create, update, delete: if isBoard();
+    }
+
+    // Board to-do list. Any team member (incl. volunteers) can read the
+    // list and tick off their OWN tasks; board/superadmin manage them.
+    // Students can NEVER read or write these.
+    match /boardTodos/{todoId} {
+      allow read: if hasStaffRole();
+      allow create, update, delete: if isBoard();
+      allow update: if isSignedIn()
+        && resource.data.assignedUid == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'doneAt'])
+        && request.resource.data.status in ['open', 'done'];
+    }
+
+    // Shiftlists (who works when at events). Whole team can read;
+    // board defines the shifts. Students can NEVER read or write these.
+    match /shifts/{shiftId} {
+      allow read: if hasStaffRole();
+      allow create, update, delete: if isBoard();
+    }
+
+    // Event tags/categories (name + colour) — public so students see the
+    // colour-coding on cards and the calendar; board manages them.
+    match /eventTags/{tagId} {
+      allow read: if true;
+      // v0.84: tag management moved to Admin → Settings, superadmin only.
+      allow create, update, delete: if isSuper();
+    }
+
+    // Shiftlist templates (v0.123): board-managed (Party, Therminal event,
+    // Cantus…) — applied to events instead of copying from another event.
+    match /shiftTemplates/{tplId} {
+      allow read, create, update, delete: if isBoard();
+    }
+
+    // Venue profiles (v0.115): board-managed locations with a default
+    // picture, default tags and per-venue statistics. Staff-only data —
+    // events copy what they need (location text, image URL) at save time.
+    match /venues/{venueId} {
+      allow read, create, update, delete: if isBoard();
+    }
+
+    // App settings. ESNcard pricing is public to read (students see the
+    // price before applying) but only finance (president/treasurer) or
+    // the superadmin may change it. The Cloud Function reads this doc
+    // too, so the charged amount always matches.
+
+    // Error log (v0.85) — any signed-in client may report an error;
+    // only finance/superadmin can read or clear it. Shape-limited so it
+    // can't be abused as free-form storage.
+    match /errorLog/{entryId} {
+      allow read, delete: if isFinance();
+      allow create: if isSignedIn()
+        && request.resource.data.keys().hasOnly(['ts', 'where', 'message', 'hash', 'uid', 'ua', 'version'])
+        && request.resource.data.message is string
+        && request.resource.data.message.size() <= 600
+        && request.resource.data.uid == request.auth.uid;
+      allow update: if false;
+    }
+
+    // Push notification device tokens — each user registers their own
+    // device(s). Nobody can read the token list from the client; only
+    // the Cloud Functions (admin SDK) use it to send.
+    match /pushTokens/{token} {
+      allow read: if false;
+      allow create, update: if isSignedIn() && request.resource.data.uid == request.auth.uid;
+      allow delete: if isSignedIn() && resource.data.uid == request.auth.uid;
+    }
+
+    // Web-push VAPID public key (public by design) — superadmin sets it once.
+    match /settings/push {
+      allow read: if true;
+      allow create, update, delete: if isSuper();
+    }
+
+    // Calendar IDs for the server-side Google Calendar sync — written
+    // once by the app (board), read by the Cloud Function triggers.
+    match /settings/calendar {
+      allow read: if hasStaffRole();
+      allow create, update: if isBoard();
+      allow delete: if isBoard();
+    }
+
+    // Organisation info (office address/hours, contact) — public content,
+    // editable by finance/superadmin in Admin → Settings.
+    match /settings/org {
+      allow read: if true;
+      allow create, update, delete: if isFinance();
+    }
+
+    // Org-wide event defaults: standard cancellation deadline & refund fee.
+    match /settings/events {
+      allow read: if true;
+      allow create, update: if isFinance()
+        && request.resource.data.defaultCancelHours is int
+        && request.resource.data.defaultCancelHours >= 0
+        && request.resource.data.defaultRefundFee is int
+        && request.resource.data.defaultRefundFee >= 0;
+      allow delete: if isFinance();
+    }
+
+    // AI master switch + model (Admin → Settings). Server re-checks it.
+    // UGent DSA activity sync (v0.110): global switch + association
+    // abbreviation. The API key itself lives ONLY in the DSA_API_KEY secret.
+    match /settings/dsa {
+      allow read: if isBoard();
+      allow create, update: if isFinance()
+        && request.resource.data.enabled is bool
+        && request.resource.data.association is string
+        && request.resource.data.association.size() < 40;
+      allow delete: if isFinance();
+    }
+
+    match /settings/ai {
+      allow read: if true;
+      allow create, update: if isFinance()
+        && request.resource.data.enabled is bool
+        && request.resource.data.model is string;
+      allow delete: if isFinance();
+    }
+
+    // Aggregated passport stats (country league, v0.101) — written by the
+    // nightly maintenance function only; aggregates, never personal data.
+    match /stats/{docId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // News posts (v0.100) — board publishes, everyone reads. Creating a
+    // post triggers a broadcast push server-side; edits never re-notify.
+    match /news/{id} {
+      allow read: if true;
+      allow create, update: if isBoard()
+        && request.resource.data.title is string
+        && request.resource.data.title.size() > 0
+        && request.resource.data.title.size() < 150;
+      allow delete: if isBoard();
+    }
+
+    // ESNcard partner deals (v0.100) — board manages, everyone reads.
+    match /partners/{id} {
+      allow read: if true;
+      allow create, update: if isBoard()
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() < 100;
+      allow delete: if isBoard();
+    }
+
+    // Survival guide / bucketlist content (v0.100) — board edits on-page.
+    match /settings/guide {
+      allow read: if true;
+      allow create, update: if isBoard()
+        && request.resource.data.content is string
+        && request.resource.data.content.size() < 20000;
+      allow delete: if isBoard();
+    }
+
+    // Board-editable e-mail templates (v0.99.8) — subject/body text with
+    // {placeholders}, filled server-side. SMTP config stays finance-only.
+    match /settings/emailTemplates {
+      allow read: if isBoard();
+      allow create, update: if isBoard()
+        && request.resource.data.esncardReady is map
+        && request.resource.data.esncardReady.subject is string
+        && request.resource.data.esncardReady.subject.size() < 200
+        && request.resource.data.esncardReady.body is string
+        && request.resource.data.esncardReady.body.size() < 4000;
+      allow delete: if isBoard();
+    }
+
+    // Confirmation e-mail SMTP config (v0.99.4). The mailbox password is
+    // NOT here — it lives in the SMTP_PASSWORD function secret. Board-only
+    // read: the client never sends mail, only the settings page shows this.
+    match /settings/email {
+      allow read: if isBoard();
+      allow create, update: if isFinance()
+        && request.resource.data.enabled is bool
+        && request.resource.data.host is string
+        && request.resource.data.user is string;
+      allow delete: if isFinance();
+    }
+
+    // Org lists that change with the years (board functions, shift tasks,
+    // discovery options) — superadmin edits them in Admin → Settings.
+    match /settings/lists {
+      allow read: if true;
+      allow create, update: if isSuper()
+        && request.resource.data.boardFunctions is list
+        && request.resource.data.shiftTasks is list
+        && request.resource.data.discoveryOptions is list;
+      allow delete: if isSuper();
+    }
+
+    // Cash register counts — any board member counts before/after an event;
+    // finance can also delete a mistaken entry.
+    match /cashCounts/{countId} {
+      allow read: if isBoard();
+      allow create, update: if isBoard()
+        && request.resource.data.eventId is string
+        && request.resource.data.phase in ['before', 'after']
+        && request.resource.data.total is int
+        && request.resource.data.total >= 0;
+      allow delete: if isFinance();
+    }
+
+    // Cantus Codex songs — everyone reads (and searches), the board edits.
+    match /codexSongs/{songId} {
+      allow read: if true;
+      allow create, update: if isBoard()
+        && request.resource.data.title is string
+        && request.resource.data.title.size() > 0
+        && request.resource.data.title.size() <= 120
+        && request.resource.data.lyrics is string
+        && request.resource.data.lyrics.size() <= 8000;
+      allow delete: if isBoard();
+    }
+
+    // Link-in-bio page content (#/links) — public, edited by the board.
+    match /settings/linktree {
+      allow read: if true;
+      allow create, update: if isBoard()
+        && request.resource.data.content is string
+        && request.resource.data.content.size() < 10000;
+      allow delete: if isBoard();
+    }
+
+    // Custom student FAQ (empty items = the built-in FAQ is used).
+    match /settings/faq {
+      allow read: if true;
+      allow create, update: if isFinance() && request.resource.data.items is list;
+      allow delete: if isFinance();
+    }
+
+    match /settings/esncard {
+      allow read: if true;
+      allow create, update: if isFinance()
+        && request.resource.data.priceStudent is int
+        && request.resource.data.priceStudent >= 0
+        && request.resource.data.priceVolunteer is int
+        && request.resource.data.priceVolunteer >= 0;
+      allow delete: if isFinance();
+    }
+
+    // Shift signups. Doc id is "<shiftId>_<uid>" so nobody can take the
+    // same shift twice. Team members sign THEMSELVES up (and off);
+    // board can assign or remove anyone. Students can NEVER read these.
+    match /shiftSignups/{signupId} {
+      allow read: if hasStaffRole();
+      allow create: if (isBoard()
+          || (hasStaffRole() && request.resource.data.uid == request.auth.uid))
+        && signupId == request.resource.data.shiftId + '_' + request.resource.data.uid
+        && request.resource.data.role in ['board', 'volunteer'];
+      allow delete: if isBoard()
+        || (isSignedIn() && resource.data.uid == request.auth.uid);
+      allow update: if false;
+    }
+
+    // Reimbursement requests (contain IBANs!). Requester + board read;
+    // any team member creates their own; board (treasurer/president)
+    // manages status. Requester can only edit/withdraw while 'submitted'.
+    // Students can NEVER read or write these.
+    match /reimbursements/{reqId} {
+      allow read: if isFinance() || (isSignedIn() && resource.data.uid == request.auth.uid);
+      allow create: if hasStaffRole()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.status == 'submitted'
+        && request.resource.data.amount is int
+        && request.resource.data.amount > 0;
+      allow update: if isFinance();
+      allow update: if isSignedIn() && resource.data.uid == request.auth.uid
+        && resource.data.status == 'submitted'
+        && request.resource.data.status == 'submitted'
+        && request.resource.data.uid == request.auth.uid;
+      allow delete: if isFinance()
+        || (isSignedIn() && resource.data.uid == request.auth.uid
+            && resource.data.status == 'submitted');
+    }
+
+    // Ticket refund requests — created and settled EXCLUSIVELY by the
+    // Cloud Functions (requestTicketRefund / decideTicketRefund), which
+    // bypass these rules. Clients only ever read: the requester sees
+    // their own, finance sees all. No client writes, ever.
+    match /refundRequests/{reqId} {
+      allow read: if isFinance() || (isSignedIn() && resource.data.uid == request.auth.uid);
+      allow create, update, delete: if false;
+    }
+
+    // Receipt photos, stored apart so the finance list stays light.
+    match /reimbursementReceipts/{receiptId} {
+      allow read: if isFinance() || (isSignedIn() && resource.data.uid == request.auth.uid);
+      allow create: if hasStaffRole() && request.resource.data.uid == request.auth.uid;
+      allow delete: if isFinance() || (isSignedIn() && resource.data.uid == request.auth.uid);
+    }
+
+    // Board notes about users — board-only reads/writes. A user may erase
+    // (but never read) notes about themselves when deleting their account.
+    match /adminNotes/{uid} {
+      allow read, write: if isBoard();
+      allow delete: if isSignedIn() && request.auth.uid == uid;
+    }
+
+    // Friendship tree (v0.104): the social graph of board & alumni —
+    // dotted = good friends, solid = best friends. One doc per pair
+    // (id = the two uids sorted, joined by "_"). Invisible to everyone
+    // outside the circle; anyone inside may add, retype or remove edges.
+    match /friendships/{pairId} {
+      allow read: if isFriendCircle();
+      allow create, update: if isFriendCircle()
+        && request.resource.data.a is string
+        && request.resource.data.b is string
+        && request.resource.data.a != request.resource.data.b
+        && request.resource.data.type in ['good', 'best'];
+      allow delete: if isFriendCircle();
+    }
+
+    // Audit trail per user (v0.102): which ESNcards were ever linked to
+    // this account and which board roles/functions they held. Written by
+    // board actions only; deletable by the user on account deletion.
+    match /userHistory/{uid} {
+      allow read, write: if isBoard();
+      allow delete: if isSignedIn() && request.auth.uid == uid;
+    }
+
+    // Team (roles). Everyone with a role can read their own entry; board
+    // sees the team list. ONLY the superadmin manages the team, may not
+    // delete themselves (no locking yourself out), and may only assign
+    // known roles.
+    match /admins/{uid} {
+      allow read: if isSignedIn() && (request.auth.uid == uid || isBoard());
+      // Friendship-tree people picker: the circle may list the team
+      // (names/roles/e-mails — needed to link alumni to current board).
+      allow list: if isFriendCircle();
+      allow create, update: if isSuper()
+        && request.resource.data.get('role', '') in ['superadmin', 'board', 'finance', 'volunteer', 'advisory', 'alumnicoord'];
+      allow delete: if isSuper() && request.auth.uid != uid;
+    }
+  }
+}

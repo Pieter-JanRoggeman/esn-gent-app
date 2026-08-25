@@ -1,0 +1,16 @@
+{
+  "name": "esn-events-functions",
+  "description": "Cloud Functions for ESN Gent Events (Stripe checkout + webhook)",
+  "engines": {
+    "node": "20"
+  },
+  "main": "index.js",
+  "dependencies": {
+    "firebase-admin": "^12.1.0",
+    "firebase-functions": "^5.0.0",
+    "google-auth-library": "^9.0.0",
+    "nodemailer": "^9.0.5",
+    "stripe": "^15.8.0"
+  },
+  "private": true
+}

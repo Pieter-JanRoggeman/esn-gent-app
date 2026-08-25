@@ -1,0 +1,45 @@
+rules_version = '2';
+
+// Cloud Storage — public card images only (event & merch photos).
+// Sensitive images (ESNcard proofs, reimbursement receipts) deliberately
+// do NOT live here: they stay in Firestore collections with per-user
+// access rules. Everything outside /images/** is locked.
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // Board-only uploads, world-readable (these images are shown to
+    // everyone on the site anyway). Cross-service lookup checks the
+    // uploader's role in the Firestore admins collection.
+    function isBoard() {
+      return request.auth != null
+        && firestore.exists(/databases/(default)/documents/admins/$(request.auth.uid))
+        && firestore.get(/databases/(default)/documents/admins/$(request.auth.uid))
+             .data.get('role', 'superadmin') in ['board', 'superadmin', 'finance'];
+    }
+
+    match /images/{folder}/{file} {
+      allow read: if true;
+      allow create, update: if isBoard()
+        && request.resource.size < 3 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+      allow delete: if isBoard();
+    }
+
+    // Proof-of-exchange PDFs (v0.105). Image proofs stay inline in
+    // Firestore (applicationProofs); only PDFs land here — max 5 MB,
+    // PDF only, one fixed filename per user (re-upload overwrites).
+    // Readable by the owner and the board; auto-purged by the nightly
+    // job ~3 months after card activation / at the academic-year end.
+    match /proofs/{uid}/{file} {
+      allow read: if request.auth != null && (request.auth.uid == uid || isBoard());
+      allow create, update: if request.auth != null && request.auth.uid == uid
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType == 'application/pdf';
+      allow delete: if request.auth != null && (request.auth.uid == uid || isBoard());
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
