@@ -5,18 +5,18 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <script>
     // app.esngent.org is THE domain (since v0.99.6). The old events.esngent.org
-    // forwards here — one canonical domain keeps PWA installs, push
+    // forwards here - one canonical domain keeps PWA installs, push
     // subscriptions & offline storage together.
     if (location.hostname === "events.esngent.org") {
       location.replace("https://app.esngent.org" + location.pathname + location.search + location.hash);
     }
   </script>
-  <title>ESN Gent App — Events, Tickets &amp; ESNcard</title>
+  <title>ESN Gent App - Events, Tickets &amp; ESNcard</title>
   <meta name="description" content="The ESN Gent app: events, tickets, ESNcard, calendar and shop for international students in Ghent." />
   <meta name="theme-color" content="#2E3192" />
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="ESN Gent App" />
-  <meta property="og:title" content="ESN Gent App — Events, Tickets &amp; ESNcard" />
+  <meta property="og:title" content="ESN Gent App - Events, Tickets &amp; ESNcard" />
   <meta property="og:description" content="The ESN Gent app: events, tickets, ESNcard, calendar and shop for international students in Ghent." />
   <meta property="og:url" content="https://app.esngent.org/" />
   <meta property="og:image" content="https://app.esngent.org/icon-512.png" />
@@ -28,12 +28,37 @@
   <meta name="apple-mobile-web-app-title" content="ESN Gent" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="preconnect" href="https://www.gstatic.com" />
+  <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin />
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
+  <script>
+    // Theme BEFORE first paint (v0.130): app.js loads late (module +
+    // CDN deps), and dark-mode users got a white flash on every cold
+    // start. Same logic as applyTheme() in app.js - keep in sync.
+    (function () {
+      try {
+        var pref = localStorage.getItem("theme");
+        var dark = pref ? pref === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+        document.documentElement.dataset.theme = dark ? "dark" : "light";
+        var m = document.querySelector('meta[name="theme-color"]');
+        if (m) m.setAttribute("content", dark ? "#12132a" : "#2E3192");
+        // Signed in last time? Hide the Sign-in button BEFORE first paint so
+        // returning users never see it flash while Firebase restores the
+        // session (app.js keeps this flag in sync on every auth change).
+        if (localStorage.getItem("esn-signed-in") === "1") {
+          document.documentElement.dataset.auth = "1";
+        }
+      } catch (e) { /* default theme */ }
+    })();
+  </script>
   <link href="https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700;900&display=swap" rel="stylesheet" />
   <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=block" rel="stylesheet" />
   <link rel="stylesheet" href="/styles.css" />
   <link rel="icon" type="image/png" href="/icon-192.png" />
 </head>
 <body>
+
+  <a class="skip-link" href="#app">Skip to content</a>
 
   <header class="site-header">
     <div class="container header-inner">
@@ -42,9 +67,9 @@
         <span class="brand-text">ESN Gent <strong>App</strong></span>
         <span class="beta-chip">BETA</span>
       </a>
-      <span class="mobile-title" id="mobile-title">Events</span>
+      <span class="mobile-title" id="mobile-title">Home</span>
       <nav class="main-nav" id="main-nav">
-        <a href="/" data-nav="home">Events</a>
+        <a href="/" data-nav="home">Home</a>
         <a href="/calendar" data-nav="calendar">Calendar</a>
         <a href="/shop" data-nav="shop">Shop</a>
         <a href="/my-tickets" data-nav="my-tickets" class="auth-only hidden">Tickets</a>
@@ -69,12 +94,12 @@
   </header>
 
   <div id="beta-banner" class="beta-banner hidden">
-    <span>🧪 <strong>Beta test</strong> — payments are in Stripe <strong>test mode</strong>: no real money. Pay with test card <code>4242&nbsp;4242&nbsp;4242&nbsp;4242</code>, any future date &amp; CVC. Please note down anything odd!</span>
+    <span>🧪 <strong>Beta test</strong> - payments are in Stripe <strong>test mode</strong>: no real money. Pay with test card <code>4242&nbsp;4242&nbsp;4242&nbsp;4242</code>, any future date &amp; CVC. Please note down anything odd!</span>
     <button id="beta-banner-close" aria-label="Dismiss">✕</button>
   </div>
 
   <main id="app" class="container">
-    <div class="loading"><div class="spinner"></div><p>Loading…</p></div>
+    <div class="loading"><div class="dragon-wrap" id="dragon-boot"><svg xmlns="http://www.w3.org/2000/svg" viewBox="240 25 2205 2200" class="dragon" role="img" aria-label="ESN Gent dragon" focusable="false"><g class="gnt-float"><g><g class="gnt-breathe"><g><path d="M 1673.1 637.7 L 1673.1 1004.6 L 1667.3 1002.8 L 1574.8 1228.1 L 1510.4 1382.1 L 1290.8 1904.1 L 1079.8 1508.6 L 991.9 1352.5 L 1229.3 1104.5 L 1380.5 939.5 L 1410.1 911.5 Z M 1673.1 637.7 " class="d1" stroke-width="1.6" stroke-linejoin="round"/><path d="M 1574.8 1228.1 L 1667.3 1002.8 L 1780.6 1313.7 Z M 1574.8 1228.1 " class="d2" stroke-width="1.6" stroke-linejoin="round"/><path d="M 1510.4 1382.1 L 1290.8 1904.1 L 1899.0 1633.9 L 1808.2 1392.5 Z M 1510.4 1382.1 " class="d3" stroke-width="1.6" stroke-linejoin="round"/></g><g><animateTransform attributeName="transform" attributeType="XML" type="rotate" values="-2.4 1380 940;2.4 1380 940;-2.4 1380 940" keyTimes="0;0.5;1" calcMode="spline" keySplines="0.4 0 0.6 1;0.4 0 0.6 1" dur="4.0s" begin="-1.0s" repeatCount="indefinite"/><path d="M 378.5 840.6 L 623.4 1167.2 L 821.7 1167.2 L 734.9 1100.5 Z M 378.5 840.6 " class="d1" stroke-width="1.6" stroke-linejoin="round"/><path d="M 734.9 1100.5 L 821.7 1167.2 L 1262.1 936.1 L 923.5 980.3 Z M 734.9 1100.5 " class="d3" stroke-width="1.6" stroke-linejoin="round"/><path d="M 1074.4 1034.5 L 1229.3 1104.5 L 1380.5 939.5 L 1266.1 936.1 Z M 1074.4 1034.5 " class="d2" stroke-width="1.6" stroke-linejoin="round"/></g><g><path d="M 1859.9 1063.7 L 1961.1 1239.6 L 2157.1 1147.6 L 2091.5 1056.2 Z M 1859.9 1063.7 " class="d3" stroke-width="1.6" stroke-linejoin="round"/><path d="M 1859.9 1063.7 L 1667.3 1002.8 L 1780.6 1313.7 L 1808.2 1392.5 L 1899.0 1633.9 L 2048.1 1408.6 L 1961.1 1239.6 " class="d1" stroke-width="1.6" stroke-linejoin="round"/><path d="M 2157.1 1147.6 L 2157.1 1360.3 L 2084.4 1234.8 L 2084.4 1181.7 Z M 2157.1 1147.6 " class="d2" stroke-width="1.6" stroke-linejoin="round"/><path d="M 2147.9 1364.9 L 2242.1 1317.8 L 2301.4 1371.8 Z M 2147.9 1364.9 " class="d3" stroke-width="1.6" stroke-linejoin="round"/><path d="M 2288.7 1330.1 L 2288.7 1290.0 L 2243.9 1234.8 L 2157.1 1234.8 L 2157.1 1360.3 L 2242.1 1317.8 L 2268.9 1300.8 L 2280.5 1311.6 Z M 2288.7 1330.1 " class="d1" stroke-width="1.6" stroke-linejoin="round"/><path d="M 2278.7 1371.8 L 2278.7 1449.1 L 2327.2 1387.3 L 2302.9 1371.8 Z M 2278.7 1371.8 " class="d2" stroke-width="1.6" stroke-linejoin="round"/></g><g><animateTransform attributeName="transform" attributeType="XML" type="rotate" values="-1.5 992 1353;1.5 992 1353;-1.5 992 1353" keyTimes="0;0.5;1" calcMode="spline" keySplines="0.4 0 0.6 1;0.4 0 0.6 1" dur="4.6s" begin="0s" repeatCount="indefinite"/><path d="M 991.9 1352.5 L 741.8 1637.9 L 922.9 1643.1 L 1079.8 1508.6 Z M 991.9 1352.5 " class="d3" stroke-width="1.6" stroke-linejoin="round"/><path d="M 922.9 1643.1 L 1009.1 1863.0 L 860.0 1863.0 L 741.8 1637.9 Z M 922.9 1643.1 " class="d1" stroke-width="1.6" stroke-linejoin="round"/><path d="M 721.1 1917.3 L 845.3 1863.0 L 1014.3 1863.0 L 1141.1 1924.2 Z M 721.1 1917.3 " class="d4" stroke-width="1.6" stroke-linejoin="round"/><path d="M 839.9 1919.2 L 726.9 2033.7 L 708.4 1916.2 Z M 839.9 1919.2 " class="d1" stroke-width="1.6" stroke-linejoin="round"/><path d="M 838.9 1919.2 L 901.4 2027.1 L 973.5 1921.5 Z M 838.9 1919.2 " class="d1" stroke-width="1.6" stroke-linejoin="round"/><path d="M 1027.8 1922.4 L 1109.7 2032.9 L 1152.5 1924.2 Z M 1027.8 1922.4 " class="d1" stroke-width="1.6" stroke-linejoin="round"/></g><g><animateTransform attributeName="transform" attributeType="XML" type="rotate" values="-1.5 1899 1634;1.5 1899 1634;-1.5 1899 1634" keyTimes="0;0.5;1" calcMode="spline" keySplines="0.4 0 0.6 1;0.4 0 0.6 1" dur="5.2s" begin="-2.3s" repeatCount="indefinite"/><path d="M 1899.0 1633.9 L 2048.1 1737.1 L 1924.8 1793.1 L 1623.7 1756.2 Z M 1899.0 1633.9 " class="d2" stroke-width="1.6" stroke-linejoin="round"/><path d="M 1925.7 1952.7 L 1924.8 1793.1 L 2048.1 1737.1 L 2059.4 1952.7 Z M 1925.7 1952.7 " class="d1" stroke-width="1.6" stroke-linejoin="round"/><path d="M 1919.7 1952.7 L 2066.3 1952.7 L 2175.8 2027.7 L 1805.0 2027.7 Z M 1919.7 1952.7 " class="d4" stroke-width="1.6" stroke-linejoin="round"/><path d="M 1896.6 2027.7 L 1831.7 2124.0 L 1798.1 2027.7 Z M 1896.6 2027.7 " class="d1" stroke-width="1.6" stroke-linejoin="round"/><path d="M 1913.2 2027.7 L 1976.6 2140.9 L 2035.6 2027.7 Z M 1913.2 2027.7 " class="d1" stroke-width="1.6" stroke-linejoin="round"/><path d="M 2152.3 2132.9 L 2084.6 2027.7 L 2187.4 2027.7 Z M 2152.3 2132.9 " class="d1" stroke-width="1.6" stroke-linejoin="round"/></g><g><path d="M 1945.5 173.0 L 1710.1 334.2 L 1741.2 421.3 Z M 1945.5 173.0 " class="d3" stroke-width="1.6" stroke-linejoin="round"/><path d="M 1319.5 352.3 L 1319.5 251.4 L 1409.4 370.4 Z M 1319.5 352.3 " class="d4" stroke-width="1.6" stroke-linejoin="round"/><path d="M 1586.0 305.8 L 1623.9 454.9 L 1741.2 421.3 L 1710.1 334.2 Z M 1586.0 305.8 " class="d4" stroke-width="1.6" stroke-linejoin="round"/><path d="M 1044.2 211.2 L 1319.5 278.5 L 1319.5 352.3 L 1409.4 370.4 L 1425.6 376.0 L 1492.4 310.9 L 1582.1 332.9 L 1455.8 460.1 L 1363.1 557.5 L 1272.6 493.3 L 1176.0 426.1 L 1044.2 332.5 Z M 1044.2 211.2 " class="d1" stroke-width="1.6" stroke-linejoin="round"/><path d="M 1319.5 249.3 L 1586.0 305.8 L 1623.9 454.9 L 1673.1 637.7 L 1410.1 911.5 L 1444.6 530.4 L 1455.8 460.1 L 1582.1 332.9 L 1492.4 310.9 L 1425.6 376.0 L 1409.4 370.4 Z M 1319.5 249.3 " class="d2" stroke-width="1.6" stroke-linejoin="round"/><path d="M 1363.1 557.5 L 1455.8 461.4 L 1444.6 530.4 Z M 1363.1 557.5 " class="d3" stroke-width="1.6" stroke-linejoin="round"/><path d="M 1064.6 481.7 L 1076.4 439.4 L 1138.2 528.5 Z M 1064.6 481.7 " class="d3" stroke-width="1.6" stroke-linejoin="round"/><path d="M 1090.0 459.0 L 1176.0 426.1 L 1272.6 493.3 L 1136.4 526.0 Z M 1090.0 459.0 " class="d2" stroke-width="1.6" stroke-linejoin="round"/></g></g></g><g><ellipse class="puff p0" cx="1035" cy="470" rx="16" ry="16" style="animation-delay:0.0s"/><ellipse class="puff p1" cx="1035" cy="470" rx="16" ry="16" style="animation-delay:0.9s"/><ellipse class="puff p2" cx="1035" cy="470" rx="16" ry="16" style="animation-delay:1.8s"/><ellipse class="puff p0" cx="1035" cy="470" rx="16" ry="16" style="animation-delay:2.7s"/><ellipse class="puff p1" cx="1035" cy="470" rx="16" ry="16" style="animation-delay:3.6s"/><ellipse class="puff p2" cx="1035" cy="470" rx="16" ry="16" style="animation-delay:4.5s"/></g></g></svg></div><p>Loading…</p></div>
   </main>
 
   <footer class="site-footer">
@@ -86,7 +111,7 @@
       </div>
       <div>
         <p><strong>Explore</strong></p>
-        <p><a href="/">Events</a><br />
+        <p><a href="/">Home</a><br />
         <a href="/calendar">Calendar</a><br />
         <a href="/shop">Shop</a><br />
         <a href="/my-tickets">My tickets</a></p>
@@ -110,7 +135,7 @@
   </footer>
 
   <nav class="bottom-nav" id="bottom-nav">
-    <a href="/" data-nav="home"><span class="material-symbols-rounded">celebration</span>Events</a>
+    <a href="/" data-nav="home"><span class="material-symbols-rounded">home</span>Home</a>
     <a href="/calendar" data-nav="calendar" class="m-student"><span class="material-symbols-rounded">calendar_month</span>Calendar</a>
     <a href="/shop" data-nav="shop" class="m-student"><span class="material-symbols-rounded">storefront</span>Shop</a>
     <a href="/my-tickets" data-nav="my-tickets" class="auth-only hidden"><span class="material-symbols-rounded">confirmation_number</span>Tickets</a>
@@ -121,12 +146,12 @@
     <a href="/account" data-nav="profile" class="auth-only hidden"><span class="material-symbols-rounded">person</span>Profile</a>
   </nav>
 
-  <div id="toast" class="toast hidden"></div>
+  <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
   <script src="https://accounts.google.com/gsi/client" async defer></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3/dist/JsBarcode.all.min.js"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" crossorigin="anonymous"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js" crossorigin="anonymous"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/jsbarcode@3/dist/JsBarcode.all.min.js" crossorigin="anonymous"></script>
   <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js"));

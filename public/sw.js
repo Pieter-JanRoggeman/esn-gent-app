@@ -7,7 +7,7 @@
 // - Firestore data itself is handled by Firestore's persistent local cache
 //   (enabled in app.js), so previously-viewed tickets render offline too.
 
-const CACHE = "esn-events-v90";
+const CACHE = "esn-events-v107";
 
 const CORE = [
   "/",

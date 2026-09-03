@@ -1,5 +1,5 @@
 // ============================================================
-// ESN Gent Events — Cloud Functions (2nd gen)
+// ESN Gent Events - Cloud Functions (2nd gen)
 //
 // createCheckoutSession : creates a Stripe Checkout session for a paid event
 // registerFree          : registers a signed-in user for a free event
@@ -18,6 +18,7 @@ const { initializeApp } = require("firebase-admin/app");
 const { getFirestore, FieldValue, Timestamp } = require("firebase-admin/firestore");
 const { getMessaging } = require("firebase-admin/messaging");
 const { getStorage: getAdminStorage } = require("firebase-admin/storage");
+const { getAuth: getAdminAuth } = require("firebase-admin/auth");
 const { GoogleAuth } = require("google-auth-library");
 const Stripe = require("stripe");
 const nodemailer = require("nodemailer");
@@ -32,6 +33,9 @@ const dsaApiKey = defineSecret("DSA_API_KEY"); // UGent DSA activity sync (v0.11
 const geminiApiKey = defineSecret("GEMINI_API_KEY");
 const stripeWebhookSecret = defineSecret("STRIPE_WEBHOOK_SECRET");
 const smtpPassword = defineSecret("SMTP_PASSWORD");
+// ESN International gave us a Cloudflare-bypass header so our server can
+// read the ESNcard verification API (v0.132). Header: x-bypass-cf-api.
+const esncardBypass = defineSecret("ESNCARD_BYPASS_KEY");
 
 const MAX_QTY = 10;
 
@@ -55,18 +59,37 @@ async function logServerError(where, err) {
 // Membership per the statutes: a verified ESNcard OR the alumni
 // flag makes you a member. Alumni get member PRICES everywhere
 // except events marked noAlumniDiscount (national/int'l trips,
-// Art. 7 §3) — but they keep member-only ACCESS even there.
+// Art. 7 §3) - but they keep member-only ACCESS even there.
 // ------------------------------------------------------------
+// Superadmin fallback switch (v0.137): settings/esncard.acceptAvailable.
+// Normally only a card that is ACTIVE on esncard.org counts. When ON, a
+// linked card that is still "available" (bought, not yet registered) counts
+// as a member card too - for when students can't register on esncard.org
+// or its API is down. Cached for a minute; the app applies the same rule.
+let acceptAvailableCache = { v: false, at: 0 };
+async function acceptAvailableCards() {
+  if (Date.now() - acceptAvailableCache.at < 60e3) return acceptAvailableCache.v;
+  try {
+    const s = await db.collection("settings").doc("esncard").get();
+    acceptAvailableCache = { v: s.exists && s.data().acceptAvailable === true, at: Date.now() };
+  } catch { acceptAvailableCache = { v: false, at: Date.now() }; }
+  return acceptAvailableCache.v;
+}
+// An expired card is no card: member prices stop the day it runs out.
+function profileHasCard(p, acceptAvailable) {
+  if (!p) return false;
+  if (p.esncardVerified === true) return !p.esncardExpiresAt || p.esncardExpiresAt.toDate() > new Date();
+  return acceptAvailable === true && !!p.esncardCode && p.esncardStatus === "available";
+}
 async function getMembership(uid) {
-  const [profSnap, adminSnap] = await Promise.all([
+  const [profSnap, adminSnap, acceptAvailable] = await Promise.all([
     db.collection("users").doc(uid).get(),
     db.collection("admins").doc(uid).get(),
+    acceptAvailableCards(),
   ]);
   const p = profSnap.exists ? profSnap.data() : {};
   return {
-    // An expired card is no card: member prices stop the day it runs out.
-    hasCard: p.esncardVerified === true
-      && (!p.esncardExpiresAt || p.esncardExpiresAt.toDate() > new Date()),
+    hasCard: profileHasCard(p, acceptAvailable),
     isAlumni: p.alumni === true,
     role: adminSnap.exists ? (adminSnap.data().role || "superadmin") : null,
   };
@@ -75,7 +98,7 @@ const memberAccess = (m) => m.hasCard || m.isAlumni;
 const memberPrice = (m, ev) => m.hasCard || (m.isAlumni && ev.noAlumniDiscount !== true);
 
 // ------------------------------------------------------------
-// AI assistant (board-only) — Gemini via the existing Google billing.
+// AI assistant (board-only) - Gemini via the existing Google billing.
 // In the app this fronts as "Jacob", the ESN Gent mascot. Three tasks:
 // draft an event description, digest event feedback, recap board-meeting
 // minutes. Master switch + model live in settings/ai (Admin → Settings),
@@ -92,7 +115,7 @@ exports.aiAssist = onCall({ secrets: [geminiApiKey] }, async (request) => {
   const aiSnap = await db.collection("settings").doc("ai").get();
   const ai = aiSnap.exists ? aiSnap.data() : {};
   if (ai.enabled !== true) {
-    throw new HttpsError("failed-precondition", "AI features are switched off — enable them in Admin → Settings.");
+    throw new HttpsError("failed-precondition", "AI features are switched off - enable them in Admin → Settings.");
   }
   // Models Google has retired for new users → their replacement, so a stale
   // saved settings/ai keeps working without anyone touching the admin panel.
@@ -109,7 +132,7 @@ exports.aiAssist = onCall({ secrets: [geminiApiKey] }, async (request) => {
     const clean = (v, n = 200) => String(v || "").slice(0, n);
     prompt = [
       "You write event descriptions for the ESN Gent app (Erasmus Student Network Ghent, Belgium).",
-      "Audience: international exchange students. Tone: warm, energetic, clear — never cringe, at most 1 emoji.",
+      "Audience: international exchange students. Tone: warm, energetic, clear - never cringe, at most 1 emoji.",
       "Length: 60–120 words. Formatting: plain text; you may use **bold**, *italic* and lines starting with '- ' as bullets. No headings, no links you were not given.",
       "STRICT: only use the facts below. Never invent times, prices, locations or promises. If a detail is missing, leave it out.",
       "",
@@ -140,7 +163,7 @@ exports.aiAssist = onCall({ secrets: [geminiApiKey] }, async (request) => {
       "Base everything strictly on the feedback below; do not invent.",
       "",
       `Ratings: ${items.length} total, average ${avg}/5.`,
-      comments.length ? `Comments:\n${comments.join("\n")}` : "No written comments — ratings only.",
+      comments.length ? `Comments:\n${comments.join("\n")}` : "No written comments - ratings only.",
     ].join("\n");
   } else if (task === "minutesRecap") {
     const meetingId = String(request.data?.meetingId || "");
@@ -164,7 +187,7 @@ exports.aiAssist = onCall({ secrets: [geminiApiKey] }, async (request) => {
     }
     const varia = String(mt.minutes || "").trim();
     if (!roundBlocks.length && !noteLines.length && !varia) {
-      throw new HttpsError("failed-precondition", "No meeting notes written yet — there is nothing to recap.");
+      throw new HttpsError("failed-precondition", "No meeting notes written yet - there is nothing to recap.");
     }
     const att = Array.isArray(mt.attendance) ? mt.attendance : [];
     const attLine = att.length
@@ -174,13 +197,13 @@ exports.aiAssist = onCall({ secrets: [geminiApiKey] }, async (request) => {
     maxTokens = 1000;
     prompt = [
       "You write a short recap of an ESN Gent board meeting (Erasmus Student Network Ghent) for the board itself.",
-      "Structure — exactly these three bold headings, each followed by lines starting with '- ':",
-      "**Decisions** — what was decided or approved ('- none recorded' if nothing).",
-      "**Action points** — concrete follow-ups; name the function or person only when the notes do.",
-      "**Per function** — one short line per function with something worth repeating; skip quiet ones.",
-      "Max 180 words. STRICT: base everything on the notes below — never invent names, dates, numbers or decisions. Thin notes mean a short recap, not padding.",
+      "Structure - exactly these three bold headings, each followed by lines starting with '- ':",
+      "**Decisions** - what was decided or approved ('- none recorded' if nothing).",
+      "**Action points** - concrete follow-ups; name the function or person only when the notes do.",
+      "**Per function** - one short line per function with something worth repeating; skip quiet ones.",
+      "Max 180 words. STRICT: base everything on the notes below - never invent names, dates, numbers or decisions. Thin notes mean a short recap, not padding.",
       "",
-      `Meeting: ${String(mt.title || "Board meeting").slice(0, 100)}${when ? ` — ${when}` : ""}${mt.location ? ` — ${String(mt.location).slice(0, 80)}` : ""}`,
+      `Meeting: ${String(mt.title || "Board meeting").slice(0, 100)}${when ? ` - ${when}` : ""}${mt.location ? ` - ${String(mt.location).slice(0, 80)}` : ""}`,
       attLine,
       roundBlocks.length ? `\nFunction rounds:\n${roundBlocks.join("\n\n")}` : "",
       noteLines.length ? `\nNotes on recent events:\n${noteLines.join("\n")}` : "",
@@ -205,7 +228,7 @@ exports.aiAssist = onCall({ secrets: [geminiApiKey] }, async (request) => {
     );
   } catch (err) {
     await logServerError("aiAssist fetch", err);
-    throw new HttpsError("internal", "Could not reach the AI service — try again in a minute.");
+    throw new HttpsError("internal", "Could not reach the AI service - try again in a minute.");
   }
   if (!res.ok) {
     const bodyText = await res.text();
@@ -215,16 +238,16 @@ exports.aiAssist = onCall({ secrets: [geminiApiKey] }, async (request) => {
     let apiMsg = "";
     try { apiMsg = JSON.parse(bodyText)?.error?.message || ""; } catch { /* not JSON */ }
     throw new HttpsError("internal",
-      `AI request failed (${res.status}).${apiMsg ? ` Google says: ${apiMsg.slice(0, 220)}` : ""} — check the model name in Settings and the GEMINI_API_KEY secret.`);
+      `AI request failed (${res.status}).${apiMsg ? ` Google says: ${apiMsg.slice(0, 220)}` : ""} - check the model name in Settings and the GEMINI_API_KEY secret.`);
   }
   const j = await res.json();
   const text = (j.candidates?.[0]?.content?.parts || []).map((p2) => p2.text || "").join("").trim();
-  if (!text) throw new HttpsError("internal", "The AI returned an empty answer — try again.");
+  if (!text) throw new HttpsError("internal", "The AI returned an empty answer - try again.");
   return { text };
 });
 
 // ------------------------------------------------------------
-// Confirmation e-mails (v0.99.4) — sent from the section's own
+// Confirmation e-mails (v0.99.4) - sent from the section's own
 // mailbox over the esngent.org hosting SMTP. Everything except the
 // password lives in settings/email (Admin → Settings → System), so the
 // provider can be swapped later (e.g. to Brevo) by editing settings +
@@ -279,7 +302,7 @@ const fmtWhenBE = (ts) => {
   });
 };
 
-// Ticket confirmation — bulletproof table HTML, brand colours inline.
+// Ticket confirmation - bulletproof table HTML, brand colours inline.
 function confirmationEmail(reg, ev) {
   const title = reg.eventTitle || ev.title || "Your event";
   const when = fmtWhenBE(reg.eventStart || ev.start);
@@ -316,7 +339,7 @@ function confirmationEmail(reg, ev) {
     </table>
   </div>`;
   const text = [
-    `Ticket confirmed — ${title}`,
+    `Ticket confirmed - ${title}`,
     when ? `When: ${when}` : "",
     where ? `Where: ${where}` : "",
     reg.optionName ? `Ticket: ${reg.optionName}` : "",
@@ -325,7 +348,7 @@ function confirmationEmail(reg, ev) {
     "",
     `Your ticket (QR at the door): ${APP_URL}/my-tickets`,
   ].filter(Boolean).join("\n");
-  return { subject: `Ticket confirmed — ${title}`, html, text };
+  return { subject: `Ticket confirmed - ${title}`, html, text };
 }
 
 // ---- Board-editable e-mail templates (settings/emailTemplates) ----
@@ -334,8 +357,8 @@ function confirmationEmail(reg, ev) {
 // fields fall back to these built-in defaults.
 const DEFAULT_TEMPLATES = {
   esncardReady: {
-    subject: "Your ESNcard is ready for pickup",
-    body: "Hi {firstName},\n\nGreat news — your ESNcard is ready! Your card number is {cardNumber} and it's valid until {expires}.\n\nCome pick it up during our office hours: {officeHours}.\n\nYour member discounts already work in the app — your profile shows the card with its barcode.\n\nSee you soon!\nThe ESN Gent team",
+    subject: "Your ESNcard number is ready",
+    body: "Hi {firstName},\n\nGood news - your ESNcard number is {cardNumber}.\n\n{activationNote}\n\nYou can pick up the physical card at the ESN office during our office hours (never at events). The current times are always here: {officeUrl}\n\nYour card and barcode are already in the app under your profile.\n\nSee you soon!\nThe ESN Gent team",
   },
 };
 async function getEmailTemplate(key) {
@@ -359,9 +382,13 @@ const fmtDateBE = (ts) =>
 
 // Branded shell around a plain-text template body (paragraphs + optional CTA).
 function templateEmailHtml(bodyText, ctaLabel, ctaUrl) {
+  // Turn bare links in the body into clickable anchors (esc runs first, so the
+  // URL only ever contains safe characters). Stops at "<" so a trailing <br>
+  // is never swallowed into the href.
+  const linkify = (s) => s.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" style="color:#2E3192">$1</a>');
   const paras = escHtml(bodyText)
     .split(/\n{2,}/)
-    .map((p) => `<p style="margin:0 0 12px;font-size:14px;color:#1d1f31;line-height:1.55">${p.replace(/\n/g, "<br>")}</p>`)
+    .map((p) => `<p style="margin:0 0 12px;font-size:14px;color:#1d1f31;line-height:1.55">${linkify(p.replace(/\n/g, "<br>"))}</p>`)
     .join("");
   return `
   <div style="margin:0;padding:24px 12px;background:#f2f3f8;font-family:Arial,Helvetica,sans-serif">
@@ -438,10 +465,10 @@ exports.registrationMail = onDocumentWritten(
           if (cfg) {
             const title = reg.eventTitle || "your event";
             const when = fmtWhenBE(reg.eventStart);
-            const body = `Hi ${(reg.name || "").split(" ")[0] || "there"},\n\nA ticket for ${title}${when ? ` (${when})` : ""} was just transferred to your account — it's yours now, and the sender's copy stopped working.\n\nShow the QR code in the app at the door. See you there!`;
+            const body = `Hi ${(reg.name || "").split(" ")[0] || "there"},\n\nA ticket for ${title}${when ? ` (${when})` : ""} was just transferred to your account - it's yours now, and the sender's copy stopped working.\n\nShow the QR code in the app at the door. See you there!`;
             await queueAndSend(cfg, {
               to: reg.email,
-              subject: `A ticket was transferred to you — ${title}`,
+              subject: `A ticket was transferred to you - ${title}`,
               text: `${body}\n\nYour ticket: ${APP_URL}/my-tickets`,
               html: templateEmailHtml(body, "Open my ticket", `${APP_URL}/my-tickets`),
               kind: "transferClaimed", refId: event.params.regId,
@@ -453,7 +480,7 @@ exports.registrationMail = onDocumentWritten(
 
     if (reg.confirmationQueuedAt) return; // already handled (also fast-exits our own update)
     if (!reg.email) return;
-    // Claim the send in a transaction — two rapid writes can fire two trigger
+    // Claim the send in a transaction - two rapid writes can fire two trigger
     // runs, and only one may send. Marked even when e-mail is off, so enabling
     // it later never blasts historic registrations.
     const won = await db.runTransaction(async (tx) => {
@@ -467,7 +494,7 @@ exports.registrationMail = onDocumentWritten(
     if (!won) return;
     try {
       const cfg = await getMailConfig();
-      if (!cfg) return; // switched off — push notifications still cover it
+      if (!cfg) return; // switched off - push notifications still cover it
       const evSnap = reg.eventId ? await db.collection("events").doc(reg.eventId).get() : null;
       const ev = evSnap && evSnap.exists ? evSnap.data() : {};
       const msg = confirmationEmail(reg, ev);
@@ -476,7 +503,7 @@ exports.registrationMail = onDocumentWritten(
   }
 );
 
-// ESNcard ready for pickup — fires when the board assigns & activates a
+// ESNcard ready for pickup - fires when the board assigns & activates a
 // card number on an application (status → active + cardNumber set). The
 // text comes from the board-editable template (settings/emailTemplates).
 exports.esncardReadyMail = onDocumentWritten(
@@ -516,12 +543,19 @@ exports.esncardReadyMail = onDocumentWritten(
         if (org.exists) officeHours = org.data().officeHoursText || "";
       } catch { /* placeholder stays generic */ }
       const t = await getEmailTemplate("esncardReady");
+      // Available card (not yet activated on esncard.org) vs already active.
+      const active = a.esncardStatus === "active" || (a.expiresAt && a.status === "active" && a.esncardStatus !== "available");
+      const activationNote = active
+        ? `It is valid until ${fmtDateBE(a.expiresAt)} and your member discounts already work in the app.`
+        : `To start using it, register the card at esncard.org with this number - once it is registered your membership is active and member prices apply automatically in the app.`;
       const vars = {
         firstName: firstName || "there",
         name: `${a.firstName || ""} ${a.lastName || ""}`.trim() || firstName || "there",
         cardNumber: a.cardNumber,
         expires: fmtDateBE(a.expiresAt),
+        activationNote,
         officeHours: officeHours || "see the app for times & location",
+        officeUrl: `${APP_URL}/office`,
       };
       const subject = fillTemplate(t.subject, vars);
       const body = fillTemplate(t.body, vars);
@@ -595,7 +629,9 @@ exports.sendTestEmail = onCall({ secrets: [smtpPassword] }, async (request) => {
     const vars = {
       firstName: "Alex", name: "Alex Example", cardNumber: "GHE123456",
       expires: sampleExp.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "Europe/Brussels" }),
+      activationNote: "To start using it, register the card at esncard.org with this number - once it is registered your membership is active and member prices apply automatically in the app.",
       officeHours: officeHours || "see the app for times & location",
+      officeUrl: `${APP_URL}/office`,
     };
     const body = fillTemplate(t.body, vars);
     msg = {
@@ -607,7 +643,7 @@ exports.sendTestEmail = onCall({ secrets: [smtpPassword] }, async (request) => {
   } else {
     msg = {
       to,
-      subject: "ESN Gent app — test e-mail",
+      subject: "ESN Gent app - test e-mail",
       text: `It works! This mail was sent through ${cfg.host} as ${cfg.user}.\nIf it landed in spam, set up DKIM in the hosting panel and add a DMARC record.`,
     };
   }
@@ -652,7 +688,7 @@ exports.eventPage = onRequest(async (req, res) => {
       if (snap.exists && snap.data().published === true) {
         const ev = snap.data();
         const e = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
-        const title = `${ev.title || "Event"} — ESN Gent`;
+        const title = `${ev.title || "Event"} - ESN Gent`;
         const rawDesc = String(ev.description || "").replace(/<[^>]+>/g, " ").replace(/[*_#`]/g, "").replace(/\s+/g, " ").trim();
         const when = ev.start && typeof ev.start.toDate === "function"
           ? ev.start.toDate().toLocaleString("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Europe/Brussels" })
@@ -674,7 +710,7 @@ exports.eventPage = onRequest(async (req, res) => {
   } catch (err) {
     await logServerError("eventPage", err);
     // Never lose the visitor over preview tags: bounce via the legacy hash
-    // route — the static shell loads and the app restores the clean URL.
+    // route - the static shell loads and the app restores the clean URL.
     res.set("Cache-Control", "no-store");
     res.redirect(302, `/#${req.path || "/"}`);
   }
@@ -685,27 +721,8 @@ exports.eventPage = onRequest(async (req, res) => {
 // SAME card number can never end up on two accounts (client rules forbid
 // users writing esncardCode themselves).
 // ------------------------------------------------------------
-exports.linkEsncard = onCall(async (request) => {
-  if (!request.auth) throw new HttpsError("unauthenticated", "Sign in first.");
-  const code = String(request.data?.code || "").trim().toUpperCase().replace(/\s+/g, "");
-  if (!/^[A-Z0-9]{6,20}$/.test(code)) {
-    throw new HttpsError("invalid-argument", "That doesn't look like an ESNcard number — letters and digits only, no spaces.");
-  }
-  const [userDup, appDup] = await Promise.all([
-    db.collection("users").where("esncardCode", "==", code).get(),
-    db.collection("esncardApplications").where("cardNumber", "==", code).get(),
-  ]);
-  if (userDup.docs.some((d) => d.id !== request.auth.uid)
-    || appDup.docs.some((d) => d.id !== request.auth.uid)) {
-    throw new HttpsError("already-exists", "This card number is already linked to another account. Double-check for typos — or come by the office if something's off.");
-  }
-  await db.collection("users").doc(request.auth.uid).set({
-    esncardCode: code,
-    esncardVerified: false, // the board verifies it (and sets the expiry)
-    updatedAt: FieldValue.serverTimestamp(),
-  }, { merge: true });
-  return { ok: true };
-});
+// linkEsncard moved to the ESNcard verification section (v0.133) - it now
+// checks esncard.org and links by real status. See bottom of the file.
 
 // ------------------------------------------------------------
 // Org-wide event defaults (settings/events): standard cancellation
@@ -776,24 +793,32 @@ async function promoteWaitlist(eventId) {
     const waiting = entries
       .filter((w) => !w.offerExpiresAt)
       .sort((a, b) => (a.createdAt?.toMillis?.() || 0) - (b.createdAt?.toMillis?.() || 0));
+    // Personal claim window (v0.125): default 12 h, board-adjustable in
+    // Admin → Settings → Events (settings/events.waitlistHours, 1–168).
+    let holdH = 12;
+    try {
+      const s = await db.collection("settings").doc("events").get();
+      const v = s.exists ? s.data().waitlistHours : null;
+      if (Number.isFinite(v) && v >= 1 && v <= 168) holdH = v;
+    } catch { /* default stands */ }
     for (const w of waiting.slice(0, freeSpots)) {
       await w.ref.update({
         offeredAt: FieldValue.serverTimestamp(),
-        offerExpiresAt: Timestamp.fromMillis(now + 24 * 3600e3),
+        offerExpiresAt: Timestamp.fromMillis(now + holdH * 3600e3),
       });
       await sendPushToUids([w.uid], "waitlist", `Your spot is ready: ${event.title || ""}`,
-        "You're first in line and the spot is held for YOU for 24 hours - open the event to grab it.",
+        `You're first in line and the spot is held for YOU for ${holdH} hours - open the event to grab it.`,
         `/event/${eventId}`);
-      // E-mail too (v0.99.12) — push isn't enabled on every phone, and a
+      // E-mail too (v0.99.12) - push isn't enabled on every phone, and a
       // 24h personal hold is too important to miss.
       if (w.email) {
         try {
           const cfg = await getMailConfig();
           if (cfg) {
-            const body = `Hi ${(w.name || "").split(" ")[0] || "there"},\n\nA spot opened up for ${event.title || "the event"} and you're first in line — it is held for YOU for the next 24 hours.\n\nOpen the event and grab it before the hold expires; after that it goes to the next person on the list.`;
+            const body = `Hi ${(w.name || "").split(" ")[0] || "there"},\n\nA spot opened up for ${event.title || "the event"} and you're first in line - it is held for YOU for the next ${holdH} hours.\n\nOpen the event and grab it before the hold expires; after that it goes to the next person on the list.`;
             await queueAndSend(cfg, {
               to: w.email,
-              subject: `Your spot is ready — ${event.title || "ESN Gent event"}`,
+              subject: `Your spot is ready - ${event.title || "ESN Gent event"}`,
               text: `${body}\n\nClaim it: ${APP_URL}/event/${eventId}`,
               html: templateEmailHtml(body, "Claim my spot", `${APP_URL}/event/${eventId}`),
               kind: "waitlistOffer", refId: eventId,
@@ -825,7 +850,7 @@ async function assertAudienceAllowed(event, uid) {
     || (aud.includes("advisory") && role === "advisory")
     || (aud.includes("alumni") && (alumni || role === "alumnicoord"));
   if (!ok) {
-    throw new HttpsError("permission-denied", `This is a team event — reserved for ${aud.map((a) => AUDIENCE_LABELS[a]).join(", ")}.`);
+    throw new HttpsError("permission-denied", `This is a team event - reserved for ${aud.map((a) => AUDIENCE_LABELS[a]).join(", ")}.`);
   }
 }
 
@@ -840,7 +865,7 @@ exports.createCheckoutSession = onCall(
       throw new HttpsError("unauthenticated", "You must be signed in to buy tickets.");
     }
     const { eventId } = request.data || {};
-    // One ticket per person per event — quantity is always 1.
+    // One ticket per person per event - quantity is always 1.
     const quantity = 1;
     if (!eventId || typeof eventId !== "string") {
       throw new HttpsError("invalid-argument", "Invalid event.");
@@ -858,7 +883,7 @@ exports.createCheckoutSession = onCall(
       throw new HttpsError("failed-precondition", "This event has been cancelled.");
     }
     if (event.regMode === "none" || event.regMode === "external") {
-      throw new HttpsError("failed-precondition", "This event has no in-app tickets — check the event page for how to join.");
+      throw new HttpsError("failed-precondition", "This event has no in-app tickets - check the event page for how to join.");
     }
     await assertAudienceAllowed(event, request.auth.uid);
 
@@ -869,7 +894,7 @@ exports.createCheckoutSession = onCall(
       .where("uid", "==", request.auth.uid)
       .get();
     if (mine.docs.some((d) => ["paid", "free", "pending"].includes(d.data().status))) {
-      throw new HttpsError("already-exists", "You already have a ticket for this event (one per person). A pending checkout expires after 1 hour.");
+      throw new HttpsError("already-exists", "You already have a ticket for this event (one per person). A pending checkout expires after about 30 minutes.");
     }
 
     // ESNcard/alumni: server-side truth about membership
@@ -889,7 +914,7 @@ exports.createCheckoutSession = onCall(
       ? (isMember && typeof option.priceEsn === "number" ? option.priceEsn : option.price)
       : (isMember && typeof event.priceEsn === "number" ? event.priceEsn : event.price);
     if (!unitPrice || unitPrice <= 0) {
-      throw new HttpsError("failed-precondition", "This ticket is free for you — use free registration.");
+      throw new HttpsError("failed-precondition", "This ticket is free for you - use free registration.");
     }
     // ---- capacity: claimed TRANSACTIONALLY (v0.99.11) ----
     // A pending checkout now HOLDS its tickets via pendingHold counters on
@@ -966,7 +991,7 @@ exports.createCheckoutSession = onCall(
             currency: event.currency || "eur",
             unit_amount: unitPrice,
             product_data: {
-              name: `${event.title} — ${option ? option.name : "ticket"}${isMember && (option ? option.priceEsn != null : event.priceEsn != null) ? " (ESNcard price)" : ""}`,
+              name: `${event.title} - ${option ? option.name : "ticket"}${isMember && (option ? option.priceEsn != null : event.priceEsn != null) ? " (ESNcard price)" : ""}`,
               description: event.location ? `📍 ${event.location}` : undefined,
             },
           },
@@ -982,7 +1007,7 @@ exports.createCheckoutSession = onCall(
       },
       success_url: `${origin}/success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${origin}/event/${eventId}`,
-      // Auto-expire unfinished checkouts after ~30 minutes — Stripe's minimum
+      // Auto-expire unfinished checkouts after ~30 minutes - Stripe's minimum
       // (30 min – 24 h), +1 min buffer so clock skew can't dip under the
       // limit. The event page also offers Resume / Cancel while it's open.
       expires_at: Math.floor(Date.now() / 1000) + 31 * 60,
@@ -992,17 +1017,17 @@ exports.createCheckoutSession = onCall(
       // checkout from the event page (readable only by owner + board).
       await regRef.update({ stripeSessionId: session.id, stripeSessionUrl: session.url });
     } catch (err) {
-      // Stripe refused or the network died AFTER capacity was claimed —
+      // Stripe refused or the network died AFTER capacity was claimed -
       // give the hold back immediately instead of waiting for the sweep.
       await releasePendingRegistration(regRef).catch(() => {});
       await logServerError("createCheckoutSession stripe", err);
-      throw new HttpsError("internal", "Could not start the payment — please try again.");
+      throw new HttpsError("internal", "Could not start the payment - please try again.");
     }
     return { url: session.url };
     } catch (err) {
       if (err instanceof HttpsError) throw err;
       await logServerError("createCheckoutSession", err);
-      throw new HttpsError("internal", `Checkout hit a server error (${String(err?.message || err).slice(0, 120)}) — the board can see details in the error log.`);
+      throw new HttpsError("internal", `Checkout hit a server error (${String(err?.message || err).slice(0, 120)}) - the board can see details in the error log.`);
     }
   }
 );
@@ -1030,7 +1055,7 @@ async function releasePendingRegistration(regRef) {
 // ------------------------------------------------------------
 // Cancel an unfinished checkout (v0.101.2). A buyer who clicks "back" on
 // the Stripe page would otherwise be stuck ("payment in progress") until
-// the session expires — this expires the Stripe session immediately and
+// the session expires - this expires the Stripe session immediately and
 // releases the held spot, so they can register again right away.
 // ------------------------------------------------------------
 exports.cancelPendingCheckout = onCall(
@@ -1052,7 +1077,7 @@ exports.cancelPendingCheckout = onCall(
       throw new HttpsError("permission-denied", "That's not your registration.");
     }
     if (reg.status !== "pending") {
-      throw new HttpsError("failed-precondition", "This ticket is already confirmed — to cancel it, request a refund from My tickets instead.");
+      throw new HttpsError("failed-precondition", "This ticket is already confirmed - to cancel it, request a refund from My tickets instead.");
     }
     // Kill the Stripe session too, so a payment page still open in another
     // tab can't complete AFTER the spot has been given back to the pool.
@@ -1061,19 +1086,19 @@ exports.cancelPendingCheckout = onCall(
       let session = null;
       try {
         session = await stripe.checkout.sessions.retrieve(reg.stripeSessionId);
-      } catch { /* unknown/gone at Stripe — releasing below is still safe */ }
+      } catch { /* unknown/gone at Stripe - releasing below is still safe */ }
       if (session && session.status === "open") {
         try {
           await stripe.checkout.sessions.expire(reg.stripeSessionId);
         } catch {
-          // Maybe it completed in the last second — re-check before releasing.
+          // Maybe it completed in the last second - re-check before releasing.
           try {
             session = await stripe.checkout.sessions.retrieve(reg.stripeSessionId);
           } catch { session = null; }
         }
       }
       if (session && session.status === "complete") {
-        throw new HttpsError("failed-precondition", "This payment already went through — your ticket is being confirmed right now.");
+        throw new HttpsError("failed-precondition", "This payment already went through - your ticket is being confirmed right now.");
       }
     }
     // Transactional + status-checked (idempotent), so racing the
@@ -1083,7 +1108,7 @@ exports.cancelPendingCheckout = onCall(
     } catch (err) {
       if (err instanceof HttpsError) throw err;
       await logServerError("cancelPendingCheckout", err);
-      throw new HttpsError("internal", `Cancelling hit a server error (${String(err?.message || err).slice(0, 120)}) — the board can see details in the error log.`);
+      throw new HttpsError("internal", `Cancelling hit a server error (${String(err?.message || err).slice(0, 120)}) - the board can see details in the error log.`);
     }
   }
 );
@@ -1145,7 +1170,7 @@ exports.registerFree = onCall(async (request) => {
       throw new HttpsError("failed-precondition", "This event has been cancelled.");
     }
     if (event.regMode === "none" || event.regMode === "external") {
-      throw new HttpsError("failed-precondition", "This event has no in-app tickets — check the event page for how to join.");
+      throw new HttpsError("failed-precondition", "This event has no in-app tickets - check the event page for how to join.");
     }
     if (event.esnOnly && !memberAccess(m)) {
       throw new HttpsError("failed-precondition", "This event is only for ESN members.");
@@ -1207,7 +1232,7 @@ exports.registerFree = onCall(async (request) => {
   } catch (err) {
     if (err instanceof HttpsError) throw err;
     await logServerError("registerFree", err);
-    throw new HttpsError("internal", `Registration hit a server error (${String(err?.message || err).slice(0, 120)}) — the board can see details in the error log.`);
+    throw new HttpsError("internal", `Registration hit a server error (${String(err?.message || err).slice(0, 120)}) - the board can see details in the error log.`);
   }
 });
 
@@ -1245,7 +1270,7 @@ exports.cancelRegistration = onCall(async (request) => {
       throw new HttpsError("permission-denied", "This is not your registration.");
     }
     if (reg.status !== "free") {
-      throw new HttpsError("failed-precondition", "Paid tickets can't be cancelled here — request a refund from My tickets instead.");
+      throw new HttpsError("failed-precondition", "Paid tickets can't be cancelled here - request a refund from My tickets instead.");
     }
     const evRef = db.collection("events").doc(reg.eventId);
     const evSnap = await tx.get(evRef);
@@ -1267,7 +1292,7 @@ exports.cancelRegistration = onCall(async (request) => {
 });
 
 // ------------------------------------------------------------
-// Ticket refunds — student side.
+// Ticket refunds - student side.
 // A PAID ticket becomes a refund REQUEST (refundRequests/{regId})
 // that the finance role approves or rejects; nothing is refunded
 // automatically. Deadline + refundability + fee come from the event.
@@ -1295,13 +1320,13 @@ exports.requestTicketRefund = onCall(async (request) => {
     throw new HttpsError("failed-precondition", "This ticket has already been used at the door.");
   }
   if (reg.transferCode) {
-    throw new HttpsError("failed-precondition", "A ticket transfer is pending — cancel the transfer first.");
+    throw new HttpsError("failed-precondition", "A ticket transfer is pending - cancel the transfer first.");
   }
 
   const evSnap = await db.collection("events").doc(reg.eventId).get();
   const event = evSnap.exists ? evSnap.data() : {};
   if (event.cancelled) {
-    throw new HttpsError("failed-precondition", "This event was cancelled — your refund is handled automatically.");
+    throw new HttpsError("failed-precondition", "This event was cancelled - your refund is handled automatically.");
   }
   if (event.nonRefundable) {
     throw new HttpsError("failed-precondition", "This event is non-refundable (that was part of the ticket policy).");
@@ -1323,7 +1348,7 @@ exports.requestTicketRefund = onCall(async (request) => {
   const reqRef = db.collection("refundRequests").doc(registrationId);
   const reqSnap = await reqRef.get();
   if (reqSnap.exists && reqSnap.data().status === "requested") {
-    throw new HttpsError("already-exists", "You already requested a refund for this ticket — the treasurer is on it.");
+    throw new HttpsError("already-exists", "You already requested a refund for this ticket - the treasurer is on it.");
   }
 
   await reqRef.set({
@@ -1347,7 +1372,7 @@ exports.requestTicketRefund = onCall(async (request) => {
 });
 
 // ------------------------------------------------------------
-// Ticket refunds — finance side (approve = Stripe refund + free
+// Ticket refunds - finance side (approve = Stripe refund + free
 // the spot; reject = ticket stays valid). finance/superadmin only.
 // ------------------------------------------------------------
 exports.decideTicketRefund = onCall(
@@ -1389,10 +1414,10 @@ exports.decideTicketRefund = onCall(
         try {
           const cfg = await getMailConfig();
           if (cfg) {
-            const body = `Hi,\n\nYour refund request for ${rq.eventTitle || "your event"} was reviewed and declined${note ? ` with this note from the treasurer:\n\n"${String(note).slice(0, 300)}"` : "."}\n\nYour ticket stays valid — see you at the event!`;
+            const body = `Hi,\n\nYour refund request for ${rq.eventTitle || "your event"} was reviewed and declined${note ? ` with this note from the treasurer:\n\n"${String(note).slice(0, 300)}"` : "."}\n\nYour ticket stays valid - see you at the event!`;
             await queueAndSend(cfg, {
               to: rq.email,
-              subject: `Refund request declined — ${rq.eventTitle || "ESN Gent"}`,
+              subject: `Refund request declined - ${rq.eventTitle || "ESN Gent"}`,
               text: `${body}\n\nYour tickets: ${APP_URL}/my-tickets`,
               html: templateEmailHtml(body, "My tickets", `${APP_URL}/my-tickets`),
               kind: "refundDeclined", refId: requestId,
@@ -1408,7 +1433,7 @@ exports.decideTicketRefund = onCall(
     if (!regSnap.exists) throw new HttpsError("not-found", "The registration no longer exists.");
     const reg = regSnap.data();
     if (reg.status !== "paid") {
-      throw new HttpsError("failed-precondition", "This ticket is no longer 'paid' — nothing to refund.");
+      throw new HttpsError("failed-precondition", "This ticket is no longer 'paid' - nothing to refund.");
     }
 
     // Optional PARTIAL refund: the treasurer can override the amount
@@ -1429,7 +1454,7 @@ exports.decideTicketRefund = onCall(
         paymentIntent = session.payment_intent || null;
       }
       if (!paymentIntent) {
-        throw new HttpsError("failed-precondition", "No Stripe payment found for this ticket — refund it manually in the Stripe dashboard, then reject this request with a note.");
+        throw new HttpsError("failed-precondition", "No Stripe payment found for this ticket - refund it manually in the Stripe dashboard, then reject this request with a note.");
       }
       await stripe.refunds.create({ payment_intent: paymentIntent, amount: payout });
     }
@@ -1468,10 +1493,10 @@ exports.decideTicketRefund = onCall(
       try {
         const cfg = await getMailConfig();
         if (cfg) {
-          const body = `Hi,\n\nGood news — your refund for ${rq.eventTitle || "your event"} was approved: ${fmtEur(payout)} is on its way back to your card. Banks usually take a few business days to show it.\n\nThe ticket itself is no longer valid.`;
+          const body = `Hi,\n\nGood news - your refund for ${rq.eventTitle || "your event"} was approved: ${fmtEur(payout)} is on its way back to your card. Banks usually take a few business days to show it.\n\nThe ticket itself is no longer valid.`;
           await queueAndSend(cfg, {
             to: rq.email,
-            subject: `Refund approved — ${fmtEur(payout)} for ${rq.eventTitle || "your event"}`,
+            subject: `Refund approved - ${fmtEur(payout)} for ${rq.eventTitle || "your event"}`,
             text: body,
             html: templateEmailHtml(body, "My tickets", `${APP_URL}/my-tickets`),
             kind: "refundApproved", refId: requestId,
@@ -1485,7 +1510,7 @@ exports.decideTicketRefund = onCall(
 
 // ------------------------------------------------------------
 // Cancel a WHOLE event: mark it cancelled, refund every paid
-// ticket IN FULL (no fee — ESN cancelled), cancel free ones.
+// ticket IN FULL (no fee - ESN cancelled), cancel free ones.
 // The event stays visible with a CANCELLED banner.
 // board/finance/superadmin only.
 // ------------------------------------------------------------
@@ -1535,7 +1560,7 @@ exports.cancelEventAndRefundAll = onCall(
               paymentIntent = session.payment_intent || null;
             }
             if (!paymentIntent) throw new Error("no Stripe payment found");
-            // Full refund — the event was cancelled by ESN, so no fee.
+            // Full refund - the event was cancelled by ESN, so no fee.
             await stripe.refunds.create({ payment_intent: paymentIntent });
           }
           await d.ref.update({
@@ -1562,7 +1587,7 @@ exports.cancelEventAndRefundAll = onCall(
       .where("eventId", "==", eventId).get();
     for (const d of openReqs.docs) {
       if (d.data().status === "requested") {
-        await d.ref.update({ status: "refunded", reviewNote: "event cancelled — refunded in full", reviewedAt: FieldValue.serverTimestamp() });
+        await d.ref.update({ status: "refunded", reviewNote: "event cancelled - refunded in full", reviewedAt: FieldValue.serverTimestamp() });
       }
     }
 
@@ -1570,10 +1595,10 @@ exports.cancelEventAndRefundAll = onCall(
     const affectedRegs = regsSnap.docs.map((d) => d.data())
       .filter((r) => ["paid", "free"].includes(r.status));
     sendPushToUids(affectedRegs.map((r) => r.uid), "tickets", `Cancelled: ${evSnap.data().title || "event"}`,
-      `${reason ? String(reason).slice(0, 90) + " — " : ""}Paid tickets are refunded in full automatically.`,
+      `${reason ? String(reason).slice(0, 90) + " - " : ""}Paid tickets are refunded in full automatically.`,
       `/event/${eventId}`).catch(() => {});
 
-    // E-mail everyone too (v0.99.12) — ENQUEUED ONLY: the 15-minute sweep
+    // E-mail everyone too (v0.99.12) - ENQUEUED ONLY: the 15-minute sweep
     // sends them in batches, so cancelling a 300-person event can't blow
     // through the mail host's hourly cap or this function's runtime.
     try {
@@ -1585,9 +1610,9 @@ exports.cancelEventAndRefundAll = onCall(
         for (const r of affectedRegs) {
           if (!r.email) continue;
           const paid = r.status === "paid" && (r.amountTotal || 0) > 0;
-          const body = `Hi ${(r.name || "").split(" ")[0] || "there"},\n\nWe're sorry — ${title}${when ? ` (${when})` : ""} has been cancelled.${reason ? `\n\nMessage from the board: "${String(reason).slice(0, 300)}"` : ""}\n\n${paid
-            ? `Your payment of ${fmtEur(r.amountTotal)} is refunded in full automatically — no fee, nothing to do. Banks usually take a few business days to show it.`
-            : "Your registration was cancelled automatically — nothing to do."}\n\nHope to see you at the next one!`;
+          const body = `Hi ${(r.name || "").split(" ")[0] || "there"},\n\nWe're sorry - ${title}${when ? ` (${when})` : ""} has been cancelled.${reason ? `\n\nMessage from the board: "${String(reason).slice(0, 300)}"` : ""}\n\n${paid
+            ? `Your payment of ${fmtEur(r.amountTotal)} is refunded in full automatically - no fee, nothing to do. Banks usually take a few business days to show it.`
+            : "Your registration was cancelled automatically - nothing to do."}\n\nHope to see you at the next one!`;
           await queueMail({
             to: r.email,
             subject: `Cancelled: ${title}`,
@@ -1606,7 +1631,7 @@ exports.cancelEventAndRefundAll = onCall(
 );
 
 // ------------------------------------------------------------
-// ESNcard payment via Stripe Checkout — pays for an EXISTING
+// ESNcard payment via Stripe Checkout - pays for an EXISTING
 // application (esncardApplications/{uid}, status 'applied').
 // Price follows the statutes: €15 student · €7.50 volunteer or
 // alumni · free for board/AB/alumni coordinator (no checkout).
@@ -1625,7 +1650,7 @@ exports.createEsncardCheckout = onCall(
     const appRef = db.collection("esncardApplications").doc(uid);
     const appSnap = await appRef.get();
     if (!appSnap.exists) {
-      throw new HttpsError("failed-precondition", "Apply for your ESNcard first — the form takes two minutes.");
+      throw new HttpsError("failed-precondition", "Apply for your ESNcard first - the form takes two minutes.");
     }
     const application = appSnap.data();
     if (application.status !== "applied") {
@@ -1642,7 +1667,7 @@ exports.createEsncardCheckout = onCall(
     if (["superadmin", "board", "finance", "advisory", "alumnicoord"].includes(m.role)) amount = 0;
     else if (m.role === "volunteer" || m.isAlumni) amount = priceVolunteer;
     if (amount === 0) {
-      throw new HttpsError("failed-precondition", "Your card is free as a team member — just pick it up at the ESN desk.");
+      throw new HttpsError("failed-precondition", "Your card is free as a team member - just pick it up at the ESN desk.");
     }
 
     const projectId = process.env.GCLOUD_PROJECT;
@@ -1658,7 +1683,7 @@ exports.createEsncardCheckout = onCall(
             currency: "eur",
             unit_amount: amount,
             product_data: {
-              name: "ESNcard — membership card (12 months)",
+              name: "ESNcard - membership card (12 months)",
               description: "Pick up your card during office hours at the ESN office.",
             },
           },
@@ -1687,7 +1712,7 @@ exports.declineEsncardApplication = onCall(
     if (!request.auth) {
       throw new HttpsError("unauthenticated", "Sign in first.");
     }
-    // Server-side role check — the client is not trusted here.
+    // Server-side role check - the client is not trusted here.
     const adminSnap = await db.collection("admins").doc(request.auth.uid).get();
     const role = adminSnap.exists ? (adminSnap.data().role || "superadmin") : null;
     if (!["board", "superadmin", "finance"].includes(role)) {
@@ -1753,7 +1778,7 @@ exports.createMerchCheckout = onCall(
     }
 
     const profSnap = await db.collection("users").doc(request.auth.uid).get();
-    const isMember = profSnap.exists && profSnap.data().esncardVerified === true;
+    const isMember = profSnap.exists && profileHasCard(profSnap.data(), await acceptAvailableCards());
     const base = variant && variant.price != null ? variant.price : product.price;
     const member = variant && variant.price != null ? variant.priceEsn : product.priceEsn;
     const unit = isMember && typeof member === "number" ? member : base;
@@ -1803,7 +1828,7 @@ exports.createMerchCheckout = onCall(
             currency: product.currency || "eur",
             unit_amount: unit,
             product_data: {
-              name: `${product.name}${variant ? ` — ${variant.name}` : ""}`,
+              name: `${product.name}${variant ? ` - ${variant.name}` : ""}`,
               description: "Pickup during office hours at the ESN office.",
             },
           },
@@ -1817,13 +1842,15 @@ exports.createMerchCheckout = onCall(
       expires_at: Math.floor(Date.now() / 1000) + 60 * 60,
     });
 
-    await orderRef.update({ stripeSessionId: session.id });
+    // Store the session URL too (v0.130) so My tickets can offer a
+    // real "Pay" button on an unfinished merch checkout, like tickets do.
+    await orderRef.update({ stripeSessionId: session.id, stripeSessionUrl: session.url });
     return { url: session.url };
   }
 );
 
 // ------------------------------------------------------------
-// Stripe webhook — confirms payments, cleans up expired checkouts
+// Stripe webhook - confirms payments, cleans up expired checkouts
 // ------------------------------------------------------------
 exports.stripeWebhook = onRequest(
   { secrets: [stripeSecretKey, stripeWebhookSecret] },
@@ -1848,7 +1875,7 @@ exports.stripeWebhook = onRequest(
         const session = stripeEvent.data.object;
         const meta = session.metadata || {};
         if (meta.type === "esncard" && meta.appUid) {
-          // Mark the application as paid (idempotent) — the board then
+          // Mark the application as paid (idempotent) - the board then
           // assigns the physical card number, which activates membership.
           const appRef = db.collection("esncardApplications").doc(meta.appUid);
           await db.runTransaction(async (tx) => {
@@ -1878,7 +1905,7 @@ exports.stripeWebhook = onRequest(
           });
           if (paidOrder) {
             sendPushToUids([paidOrder.uid], "tickets", "Order paid ✅",
-              `${paidOrder.productName || "Your order"} — pick it up during office hours (order QR in the app).`,
+              `${paidOrder.productName || "Your order"} - pick it up during office hours (order QR in the app).`,
               "/my-tickets").catch(() => {});
           }
         } else if (meta.registrationId) {
@@ -1900,7 +1927,7 @@ exports.stripeWebhook = onRequest(
               ticketsSold: FieldValue.increment(reg.quantity || 1),
               ...(reg.usedEsncard ? { esnSold: FieldValue.increment(reg.quantity || 1) } : {}),
               ...(reg.optionId ? { [`optionSold.${reg.optionId}`]: FieldValue.increment(reg.quantity || 1) } : {}),
-              // The pending hold becomes a real sale — release it.
+              // The pending hold becomes a real sale - release it.
               ...(reg.holdsClaimed ? { pendingHold: FieldValue.increment(-(reg.quantity || 1)) } : {}),
               ...(reg.holdsClaimed && reg.heldEsn ? { pendingEsnHold: FieldValue.increment(-(reg.quantity || 1)) } : {}),
               ...(reg.holdsClaimed && reg.heldOptionId ? { [`pendingOptionHold.${reg.heldOptionId}`]: FieldValue.increment(-(reg.quantity || 1)) } : {}),
@@ -1909,7 +1936,7 @@ exports.stripeWebhook = onRequest(
           if (confirmedReg) {
             if (confirmedReg.eventId) await clearWaitlistFor(confirmedReg.eventId, confirmedReg.uid);
             sendPushToUids([confirmedReg.uid], "tickets", "Ticket confirmed 🎉",
-              `${confirmedReg.eventTitle || "Your event"} — your ticket is in the app. See you there!`,
+              `${confirmedReg.eventTitle || "Your event"} - your ticket is in the app. See you there!`,
               "/my-tickets").catch(() => {});
           }
         }
@@ -1917,7 +1944,7 @@ exports.stripeWebhook = onRequest(
         const session = stripeEvent.data.object;
         const meta = session.metadata || {};
         if (meta.type === "esncard") {
-          // nothing to clean up — the application simply stays 'applied'
+          // nothing to clean up - the application simply stays 'applied'
         } else if (meta.type === "merch" && meta.orderId) {
           const orderRef = db.collection("merchOrders").doc(meta.orderId);
           const snap = await orderRef.get();
@@ -1939,13 +1966,13 @@ exports.stripeWebhook = onRequest(
 );
 
 // ============================================================
-// Google Calendar sync — SERVER-SIDE (v1.22).
+// Google Calendar sync - SERVER-SIDE (v1.22).
 // No more sign-in popups: the functions' own service account
 // writes to the calendars. One-time setup:
 //   1. Enable the "Google Calendar API" in the GCP project.
 //   2. Share BOTH calendars (public + board) with the functions'
 //      service account e-mail, permission "Make changes to events".
-//   3. Click "Sync calendar" once in the admin dashboard — that
+//   3. Click "Sync calendar" once in the admin dashboard - that
 //      stores the calendar IDs in settings/calendar and resyncs.
 // From then on every event/meeting create, edit, publish,
 // cancel or delete syncs automatically via Firestore triggers.
@@ -1979,12 +2006,12 @@ const mdPlain = (s) => String(s || "")
   .replace(/[*_#`]/g, "");
 
 // ------------------------------------------------------------
-// UGent DSA activity sync (v0.110) — dsa.ugent.be/api/spec.
+// UGent DSA activity sync (v0.110) - dsa.ugent.be/api/spec.
 // Published events are pushed automatically (create → POST, edit → PUT,
 // unpublish/cancel/delete/toggle-off → DELETE). Per-event opt-out via
 // events.dsaSync === false; global switch + association abbreviation in
 // settings/dsa. The DSA activity id is stored on OUR event doc
-// (dsaActivityId) — the API's sync_data field isn't writable on create.
+// (dsaActivityId) - the API's sync_data field isn't writable on create.
 // Auth: raw API key in the Authorization header (per the spec).
 // ------------------------------------------------------------
 async function getDsaConfig() {
@@ -1996,7 +2023,7 @@ async function getDsaConfig() {
     return { association: String(d.association).trim() };
   } catch { return null; }
 }
-// DSA's examples use naive Belgian local time ("2025-03-30 15:30:00") —
+// DSA's examples use naive Belgian local time ("2025-03-30 15:30:00") -
 // sv-SE locale prints exactly yyyy-MM-dd HH:mm:ss.
 const dsaTime = (ms) => new Intl.DateTimeFormat("sv-SE", {
   timeZone: "Europe/Brussels", year: "numeric", month: "2-digit", day: "2-digit",
@@ -2013,10 +2040,10 @@ async function dsaFetch(method, path, body) {
 }
 // Which events belong on DSA: published, not cancelled, and not opted out.
 // Office hours and team events (board meetings & co) are INCLUDED by default
-// since v0.112 — the university wants those registered too. The per-event
+// since v0.112 - the university wants those registered too. The per-event
 // "Publish on DSA" checkbox (dsaSync:false) is the only opt-out.
 const dsaWanted = (ev) => !!ev && ev.published === true && !ev.cancelled && ev.dsaSync !== false;
-// DSA "terrain" enum — API tokens per the spec ("public, ugent, augent,
+// DSA "terrain" enum - API tokens per the spec ("public, ugent, augent,
 // home, online, abroad or other"); the Dutch names (Openbaar domein…) are
 // only the UI labels. Default "other" (= Andere: private venues like bars);
 // per-event override via the form's dsaTerrain select.
@@ -2037,7 +2064,7 @@ async function dsaTypeForEvent(ev) {
         if (t && DSA_TYPES.includes(t)) return t;
       }
     }
-  } catch { /* mapping is best-effort — fall through */ }
+  } catch { /* mapping is best-effort - fall through */ }
   return ev.officeHours ? "Permanentie" : "Andere";
 }
 function dsaBody(eventId, ev, association, dsaType) {
@@ -2047,7 +2074,7 @@ function dsaBody(eventId, ev, association, dsaType) {
   return {
     association,
     // NOTE: the API's Activity schema has NO english_title/english_description
-    // fields (they were silently ignored) — the panel's "Engelse" fields can't
+    // fields (they were silently ignored) - the panel's "Engelse" fields can't
     // be filled via this API. Our (English) text lands in title/description.
     title: ev.title || "ESN Gent event",
     description: desc,
@@ -2056,7 +2083,7 @@ function dsaBody(eventId, ev, association, dsaType) {
     start_time: dsaTime(startMs),
     end_time: dsaTime(Math.max(endMs, startMs + 15 * 60 * 1000)),
     // Team-audience events (board meeting, alumni quiz…) are registered as
-    // NON-public activities — they're members-only, not open to any student.
+    // NON-public activities - they're members-only, not open to any student.
     // Public per DSA's definition: announced publicly, access may be limited
     // to members/registrations. Team events (board meeting, teambuilding…)
     // are invitation-only → private (only visible to board/konvent/DSA,
@@ -2081,7 +2108,7 @@ async function syncEventToDsa(eventId, docRef, before, after) {
     }
     return null;
   }
-  // DSA rejects create/update once the activity has started — 422
+  // DSA rejects create/update once the activity has started - 422
   // "start_time: Too late" (seen 25/08 editing a running event). Skip and
   // leave the DSA entry as last pushed; nothing to log, it's by design.
   if (after.start?.toMillis && after.start.toMillis() <= Date.now()) return null;
@@ -2095,20 +2122,20 @@ async function syncEventToDsa(eventId, docRef, before, after) {
   return "created";
 }
 // Only re-sync when DSA-relevant content changed (also stops the trigger
-// from looping on its own dsaActivityId write-back — id is NOT included).
+// from looping on its own dsaActivityId write-back - id is NOT included).
 const dsaFingerprint = (d) => d && JSON.stringify({
   t: d.title, de: d.description, l: d.location,
   s: d.start?.toMillis ? d.start.toMillis() : null,
   e: d.end?.toMillis ? d.end.toMillis() : null,
   p: !!d.published, c: !!d.cancelled, ds: d.dsaSync !== false,
   tr: d.dsaTerrain || "",
-  // Tags decide the DSA TYPE since v0.114 — without this key a tag change
+  // Tags decide the DSA TYPE since v0.114 - without this key a tag change
   // never re-synced (the "update didn't come through" bug, 25/08).
   tg: Array.isArray(d.tagIds) ? d.tagIds.join(",") : "",
   au: Array.isArray(d.audience) ? d.audience.join(",") : "",
 });
 
-// Board view of the association's UGent room reservations (v0.111) —
+// Board view of the association's UGent room reservations (v0.111) -
 // GET /api/zaalreservaties, proxied server-side so the API key never
 // reaches the browser. Rooms are requested on the DSA site itself; this
 // only READS the current state (approved / pending) for the board page.
@@ -2119,7 +2146,7 @@ exports.dsaReservations = onCall({ secrets: [dsaApiKey] }, async (request) => {
   if (!["board", "superadmin", "finance", "advisory"].includes(role)) {
     throw new HttpsError("permission-denied", "Board only.");
   }
-  // Association from settings/dsa — works even while the event sync is off.
+  // Association from settings/dsa - works even while the event sync is off.
   let assoc = "esn";
   try {
     const s = await db.collection("settings").doc("dsa").get();
@@ -2129,7 +2156,7 @@ exports.dsaReservations = onCall({ secrets: [dsaApiKey] }, async (request) => {
   return { entries: res?.page?.entries || [], total: res?.page?.total_entries || 0, association: assoc };
 });
 
-// Manual backfill / repair (admin Settings button) — board only.
+// Manual backfill / repair (admin Settings button) - board only.
 exports.dsaResyncAll = onCall({ secrets: [dsaApiKey], timeoutSeconds: 300 }, async (request) => {
   if (!request.auth) throw new HttpsError("unauthenticated", "Sign in first.");
   const adminSnap = await db.collection("admins").doc(request.auth.uid).get();
@@ -2160,14 +2187,14 @@ exports.dsaResyncAll = onCall({ secrets: [dsaApiKey], timeoutSeconds: 300 }, asy
 // ---- Board meetings → DSA (v0.113) ----
 // The board-meeting planner lives OUTSIDE the events collection, so the event
 // sync never saw it. DSA wants meetings announced too (≥72 h, insurance):
-// pushed as a PRIVATE "Vergadering" — visible only to board/konvent/DSA,
+// pushed as a PRIVATE "Vergadering" - visible only to board/konvent/DSA,
 // not counted toward the 10 required activities. Standard on; the plan-form
 // checkbox / meeting-page DSA button set dsaSync:false to keep one off.
 const dsaMeetingFingerprint = (d) => d && JSON.stringify({
   t: d.title || "", s: d.start?.toMillis ? d.start.toMillis() : null,
   l: d.location || "", ds: d.dsaSync !== false,
 });
-// (Separate function from onBoardMeetingWrite — that one does the board
+// (Separate function from onBoardMeetingWrite - that one does the board
 // Google Calendar and early-returns when no calendar is configured.)
 exports.onBoardMeetingDsa = onDocumentWritten({ document: "boardMeetings/{meetingId}", secrets: [dsaApiKey] }, async (event) => {
   const before = event.data.before.exists ? event.data.before.data() : null;
@@ -2240,13 +2267,14 @@ async function calUpsert(calId, docRef, currentGid, body) {
   return gid;
 }
 
-// Only re-sync when calendar-RELEVANT content changed — this also stops
+// Only re-sync when calendar-RELEVANT content changed - this also stops
 // the trigger from looping on its own googleEventId write-back.
 const eventCalFingerprint = (d) => d && JSON.stringify({
   t: d.title, de: d.description, l: d.location,
   s: d.start?.toMillis ? d.start.toMillis() : null,
   e: d.end?.toMillis ? d.end.toMillis() : null,
   p: !!d.published, c: !!d.cancelled,
+  cs: d.calSync !== false, // per-event calendar switch (v0.125)
   so: !!(d.capacity && (d.ticketsSold || 0) >= d.capacity),
   au: Array.isArray(d.audience) ? d.audience.join(",") : "", // team events (un)restricted → resync
 });
@@ -2267,7 +2295,7 @@ exports.onEventWrite = onDocumentWritten(
         const when = new Date(after.start.toMillis()).toLocaleDateString("en-GB",
           { weekday: "short", day: "numeric", month: "short", timeZone: "Europe/Brussels" });
         await broadcastPush("newEvents", `New event: ${after.title || ""}`,
-          `${when}${after.location ? " · " + after.location : ""} — registration is open!`,
+          `${when}${after.location ? " · " + after.location : ""} - registration is open!`,
           `/event/${event.params.eventId}`);
       }
       // Sold-out → spot freed: offer it to the FIRST waitlist person (24h hold).
@@ -2279,7 +2307,7 @@ exports.onEventWrite = onDocumentWritten(
     } catch (err) { await logServerError("event push", err); }
   }
 
-  // ---- UGent DSA sync (v0.110) — before the calendar block, which can
+  // ---- UGent DSA sync (v0.110) - before the calendar block, which can
   // early-return when no calendar is configured ----
   try {
     if (!after) {
@@ -2291,15 +2319,16 @@ exports.onEventWrite = onDocumentWritten(
 
   // ---- Google Calendar sync ----
   const { publicCalendarId } = await calendarIds();
-  if (!publicCalendarId) return; // not set up yet — click "Sync calendar" once
+  if (!publicCalendarId) return; // not set up yet - click "Sync calendar" once
   try {
     if (!after) { // event deleted
       if (before?.googleEventId) await calFetch("DELETE", publicCalendarId, `/events/${before.googleEventId}`).catch(() => {});
       return;
     }
     if (before && eventCalFingerprint(before) === eventCalFingerprint(after)) return;
-    // Drafts AND team-audience events stay off the public Google Calendar.
-    if (!after.published || (Array.isArray(after.audience) && after.audience.length)) {
+    // Drafts, team-audience events AND per-event opt-outs (calSync:false,
+    // v0.125) stay off the public Google Calendar.
+    if (!after.published || after.calSync === false || (Array.isArray(after.audience) && after.audience.length)) {
       if (after.googleEventId) {
         await calFetch("DELETE", publicCalendarId, `/events/${after.googleEventId}`).catch(() => {});
         await event.data.after.ref.update({ googleEventId: FieldValue.delete() });
@@ -2335,7 +2364,7 @@ exports.onBoardMeetingWrite = onDocumentWritten("boardMeetings/{meetingId}", asy
     await calUpsert(boardCalendarId, event.data.after.ref, after.googleEventId || null, {
       summary: after.title || "Board meeting",
       location: after.location || "",
-      description: `Board meeting — minutes & agenda in the ESN Gent App: ${APP_URL}/board`,
+      description: `Board meeting - minutes & agenda in the ESN Gent App: ${APP_URL}/board`,
       start: { dateTime: start.toISOString(), timeZone: "Europe/Brussels" },
       end: { dateTime: end.toISOString(), timeZone: "Europe/Brussels" },
     });
@@ -2344,7 +2373,7 @@ exports.onBoardMeetingWrite = onDocumentWritten("boardMeetings/{meetingId}", asy
   }
 });
 
-// Manual full resync (the admin "Sync calendar" button) — board only.
+// Manual full resync (the admin "Sync calendar" button) - board only.
 exports.syncCalendarAll = onCall({ timeoutSeconds: 300 }, async (request) => {
   if (!request.auth) throw new HttpsError("unauthenticated", "Sign in first.");
   const adminSnap = await db.collection("admins").doc(request.auth.uid).get();
@@ -2354,7 +2383,7 @@ exports.syncCalendarAll = onCall({ timeoutSeconds: 300 }, async (request) => {
   }
   const { publicCalendarId } = await calendarIds();
   if (!publicCalendarId) {
-    throw new HttpsError("failed-precondition", "Calendar IDs not stored yet — the app saves them when you click Sync.");
+    throw new HttpsError("failed-precondition", "Calendar IDs not stored yet - the app saves them when you click Sync.");
   }
   const cutoff = new Date(Date.now() - 24 * 3600 * 1000);
   const snap = await db.collection("events")
@@ -2364,7 +2393,7 @@ exports.syncCalendarAll = onCall({ timeoutSeconds: 300 }, async (request) => {
   for (const d of snap.docs) {
     try {
       const ed = d.data();
-      if (Array.isArray(ed.audience) && ed.audience.length) { // team events never sync
+      if (ed.calSync === false || (Array.isArray(ed.audience) && ed.audience.length)) { // opted-out & team events never sync
         if (ed.googleEventId) {
           await calFetch("DELETE", publicCalendarId, `/events/${ed.googleEventId}`).catch(() => {});
           await d.ref.update({ googleEventId: FieldValue.delete() });
@@ -2379,7 +2408,7 @@ exports.syncCalendarAll = onCall({ timeoutSeconds: 300 }, async (request) => {
 });
 
 // ============================================================
-// BETA ONLY — wipe all test data for a fresh testing round.
+// BETA ONLY - wipe all test data for a fresh testing round.
 // Superadmin only. Keeps: accounts (users), team roles (admins),
 // settings, event tags and shop products. Clears the ESNcard
 // status on user profiles (applications are wiped).
@@ -2403,7 +2432,7 @@ exports.betaResetData = onCall({ timeoutSeconds: 540 }, async (request) => {
     "boardMeetings", "boardTodos", "reimbursements", "reimbursementReceipts",
     "userHistory",
   ];
-  // Proof-of-exchange PDFs live in Storage — wipe that folder too.
+  // Proof-of-exchange PDFs live in Storage - wipe that folder too.
   try { await getAdminStorage().bucket().deleteFiles({ prefix: "proofs/" }); } catch { /* none */ }
   const counts = {};
   for (const col of wipe) {
@@ -2436,10 +2465,10 @@ exports.betaResetData = onCall({ timeoutSeconds: 540 }, async (request) => {
 });
 
 // ============================================================
-// Push notifications (v0.81) — FCM web push, data-only messages
+// Push notifications (v0.81) - FCM web push, data-only messages
 // (our service worker renders them). Tokens live in pushTokens/
 // {token} → {uid}; per-user category preferences in
-// users/{uid}.notifyPrefs — a category is ON unless explicitly
+// users/{uid}.notifyPrefs - a category is ON unless explicitly
 // set to false. All sends are fire-and-forget: a push failure
 // must never break a payment or admin action.
 // Categories: tickets · reminders · newEvents · waitlist ·
@@ -2495,7 +2524,7 @@ async function sendPushToUids(uids, category, title, body, link) {
   } catch (err) { console.error("sendPushToUids failed:", err.message); }
 }
 
-// Push to every device (respecting preferences) — e.g. new event published.
+// Push to every device (respecting preferences) - e.g. new event published.
 async function broadcastPush(category, title, body, link) {
   try {
     const snap = await db.collection("pushTokens").get();
@@ -2534,7 +2563,7 @@ exports.onCheckinPush = onDocumentWritten("registrations/{regId}", async (event)
     if ((before && before.checkedInAt) || !after.checkedInAt) return; // only the first check-in
     if (!["paid", "free"].includes(after.status)) return;
     // Secret badge data (v0.109): was this the FIRST scan of the event?
-    // (The client can't know — students only read their own registrations.)
+    // (The client can't know - students only read their own registrations.)
     try {
       const cnt = await db.collection("registrations")
         .where("eventId", "==", after.eventId)
@@ -2543,7 +2572,7 @@ exports.onCheckinPush = onDocumentWritten("registrations/{regId}", async (event)
       if (cnt.data().count === 1) await event.data.after.ref.update({ firstIn: true });
     } catch { /* badge data is a nice-to-have */ }
     await sendPushToUids([after.uid], "tickets", "New stamp in your ESN Passport 🛂",
-      `Checked in at ${after.eventTitle || "the event"} — have fun! Your passport just earned a stamp and XP.`,
+      `Checked in at ${after.eventTitle || "the event"} - have fun! Your passport just earned a stamp and XP.`,
       "/passport");
   } catch (err) { await logServerError("onCheckinPush", err); }
 });
@@ -2557,20 +2586,20 @@ exports.onEsncardAppWrite = onDocumentWritten("esncardApplications/{uid}", async
   if (before.status !== after.status) {
     if (after.status === "paid") {
       await sendPushToUids([uid], "esncard", "ESNcard payment received ✅",
-        "The board now prepares your card — you'll hear when it's ready for pickup.", "/account");
+        "The board now prepares your card - you'll hear when it's ready for pickup.", "/account");
     } else if (after.status === "active") {
       await sendPushToUids([uid], "esncard", "Your ESNcard is ready 🎉",
-        `Card ${after.cardNumber || ""} is verified — pick it up during office hours at the ESN office.`, "/account");
+        `Card ${after.cardNumber || ""} is verified - pick it up during office hours at the ESN office.`, "/account");
     } else if (after.status === "rejected") {
       await sendPushToUids([uid], "esncard", "About your ESNcard application",
-        "The board couldn't approve it — open the app to see why and resubmit.", "/account");
+        "The board couldn't approve it - open the app to see why and resubmit.", "/account");
     }
   }
 });
 
 // ---- Scheduled reminders: events (3h before) & shifts (24h before) ----
 // ------------------------------------------------------------
-// Nightly housekeeping — keeps the always-growing collections lean so
+// Nightly housekeeping - keeps the always-growing collections lean so
 // the app stays fast (and cheap) over the years:
 //   errorLog   > 90 days   → deleted (it's a debugging tool, not an archive)
 //   waitlist   entries for events > 60 days past → deleted
@@ -2589,19 +2618,20 @@ exports.nightlyMaintenance = onSchedule("every 24 hours", async () => {
         total += snap.size;
         if (snap.size < 400) break;
       }
-      if (total) console.log(`maintenance: ${label} — deleted ${total}`);
+      if (total) console.log(`maintenance: ${label} - deleted ${total}`);
     } catch (err) { await logServerError(`maintenance ${label}`, err); }
   };
   const days = (n) => Timestamp.fromMillis(Date.now() - n * 86400e3);
   await purge("errorLog>90d", db.collection("errorLog").where("ts", "<", days(90)));
-  // eventStart (not createdAt!) — someone may join a waitlist months before
+  // eventStart (not createdAt!) - someone may join a waitlist months before
   // a big trip; only entries whose EVENT is 60+ days past are stale.
   await purge("waitlist-past-event", db.collection("waitlist").where("eventStart", "<", days(60)));
   await purge("todos-done>2y", db.collection("boardTodos").where("doneAt", "<", days(730)));
+  await purge("auditLog>1y", db.collection("auditLog").where("at", "<", days(365)));
   // Mail queue hygiene: delivered mails after 30 days, anything stuck after 90.
   await purge("mail-sent>30d", db.collection("mailQueue").where("sentAt", "<", days(30)));
   await purge("mail-stale>90d", db.collection("mailQueue").where("createdAt", "<", days(90)));
-  // S1 cleanup: IBANs cached on profile docs by pre-v0.99.11 app versions —
+  // S1 cleanup: IBANs cached on profile docs by pre-v0.99.11 app versions -
   // scrub them. IBANs live only on reimbursement docs (finance-only read).
   try {
     const dirty = await db.collection("users").where("iban", ">", "").limit(400).get();
@@ -2631,19 +2661,19 @@ exports.nightlyMaintenance = onSchedule("every 24 hours", async () => {
   // Proofs are only needed while the board reviews the application, so they
   // are removed automatically: ~90 days after the card was activated, and in
   // any case once the application belongs to a PREVIOUS academic year (the
-  // application record itself stays — it documents the issued card).
+  // application record itself stays - it documents the issued card).
   try {
     const now = new Date();
     const cutoffActivated = new Date(now.getTime() - 90 * 24 * 3600 * 1000);
     const ayStart = new Date(now.getMonth() >= 6 ? now.getFullYear() : now.getFullYear() - 1, 6, 1);
-    // select() keeps the (large) inline images out of memory — we only need
+    // select() keeps the (large) inline images out of memory - we only need
     // to know WHICH docs exist and whether they point at a Storage PDF.
     const proofs = await db.collection("applicationProofs").select("file").get();
     let purged = 0;
     for (const p of proofs.docs) {
       let kill = false;
       const appSnap = await db.collection("esncardApplications").doc(p.id).get();
-      if (!appSnap.exists) kill = true; // orphan — application already gone
+      if (!appSnap.exists) kill = true; // orphan - application already gone
       else {
         const a = appSnap.data();
         const created = a.createdAt?.toDate?.() || null;
@@ -2664,7 +2694,7 @@ exports.nightlyMaintenance = onSchedule("every 24 hours", async () => {
     if (purged) console.log(`maintenance: purged ${purged} old proof-of-exchange files`);
   } catch (err) { await logServerError("maintenance proof retention", err); }
   // Secret badge data (v0.109): mark the LAST check-in of freshly finished
-  // events ("closed the party") — only knowable once the event is over, and
+  // events ("closed the party") - only knowable once the event is over, and
   // only meaningful with a real crowd (≥5 scans). Skips office hours.
   try {
     const evSnap = await db.collection("events")
@@ -2685,7 +2715,7 @@ exports.nightlyMaintenance = onSchedule("every 24 hours", async () => {
     }
   } catch (err) { await logServerError("maintenance last-in", err); }
   // ESN Passport country league: check-ins per nationality, current academic
-  // year (July–June). Aggregates only — no names, so no opt-in needed.
+  // year (July–June). Aggregates only - no names, so no opt-in needed.
   try {
     const now = new Date();
     const ayYear = now.getMonth() >= 6 ? now.getFullYear() : now.getFullYear() - 1;
@@ -2723,7 +2753,7 @@ exports.nightlyMaintenance = onSchedule("every 24 hours", async () => {
     const rows = Object.entries(byCountry)
       .map(([country, v]) => ({
         country, checkins: v.checkins, people: v.people,
-        // avg minutes after the official start — needs ≥5 data points to show
+        // avg minutes after the official start - needs ≥5 data points to show
         lateMin: v.delayN >= 5 ? Math.round(v.delaySum / v.delayN) : null,
       }))
       .sort((a, b) => b.checkins - a.checkins)
@@ -2766,7 +2796,7 @@ exports.pushReminders = onSchedule("every 30 minutes", async () => {
       const regs = await db.collection("registrations").where("eventId", "==", d.id).get();
       const uids = regs.docs.map((r) => r.data()).filter((r) => ["paid", "free"].includes(r.status)).map((r) => r.uid);
       await sendPushToUids(uids, "reminders", `Starts in 3 hours: ${ev.title}`,
-        `${t}${ev.location ? " · " + ev.location : ""} — your ticket is in the app.`, `/event/${d.id}`);
+        `${t}${ev.location ? " · " + ev.location : ""} - your ticket is in the app.`, `/event/${d.id}`);
       await d.ref.update({ reminderSent: true });
     }
 
@@ -2775,9 +2805,462 @@ exports.pushReminders = onSchedule("every 30 minutes", async () => {
       const signups = await db.collection("shiftSignups").where("eventId", "==", d.id).get();
       const uids = signups.docs.map((s) => s.data().uid);
       await sendPushToUids(uids, "shifts", `Shift tomorrow: ${ev.title}`,
-        `Starts ${t} — check your task and time in the app. Thanks for helping out!`, "/shifts");
+        `Starts ${t} - check your task and time in the app. Thanks for helping out!`, "/shifts");
       await d.ref.update({ shiftReminderSent: true });
     }
   }
   } catch (err) { await logServerError("pushReminders", err); }
+});
+
+// ------------------------------------------------------------
+// Birthday wishes (v0.135) - a push at 09:00 Belgian time to everyone
+// whose birthday it is. Push only, no e-mail (by design). The
+// birthdayWishedYear marker on the profile guarantees at most one wish
+// per person per year even if the schedule ever double-fires; users can
+// opt out via the "birthday" notification category. Feb-29 birthdays
+// are wished on Feb 28 in non-leap years.
+// ------------------------------------------------------------
+exports.birthdayWishes = onSchedule(
+  { schedule: "every day 09:00", timeZone: "Europe/Brussels" },
+  async () => {
+    try {
+      const be = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Europe/Brussels", year: "numeric", month: "2-digit", day: "2-digit",
+      }).format(new Date()); // YYYY-MM-DD in Belgian time
+      const [y, mm, dd] = be.split("-");
+      const year = Number(y);
+      const leap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+      const wanted = new Set([`${mm}-${dd}`]);
+      if (mm === "02" && dd === "28" && !leap) wanted.add("02-29");
+      const snap = await db.collection("users")
+        .select("birthday", "firstName", "displayName", "birthdayWishedYear").get();
+      let wished = 0;
+      for (const d of snap.docs) {
+        const u = d.data();
+        const b = String(u.birthday || "");
+        if (b.length < 10 || !wanted.has(b.slice(5))) continue;
+        if (u.birthdayWishedYear === year) continue; // already wished this year
+        // Claim BEFORE sending - a retried run must never double-push.
+        await d.ref.update({ birthdayWishedYear: year }).catch(() => {});
+        const first = u.firstName || (u.displayName || "").split(" ")[0] || "";
+        await sendPushToUids([d.id], "birthday",
+          `Happy birthday${first ? `, ${first}` : ""}! 🎂`,
+          "The whole ESN Gent team wishes you a fantastic day. Come celebrate with us at the next event!",
+          "/calendar");
+        wished++;
+      }
+      if (wished) console.log(`birthdayWishes: wished ${wished} member${wished === 1 ? "" : "s"} a happy birthday`);
+    } catch (err) { await logServerError("birthdayWishes", err); }
+  }
+);
+
+// ------------------------------------------------------------
+// Account deletion (v0.138) - ONE server-side sweep with the admin SDK, so
+// nothing depends on client rules or a half-finished loop. What happens:
+//   removed   : profile, board notes, card/role history, waitlist entries,
+//               push tokens, open reimbursements + receipts, proof-of-exchange,
+//               contact messages (+ replies), friendship links, upcoming
+//               shift sign-ups, the team role, the login itself
+//   anonymised: past registrations, merch orders, past shift sign-ups,
+//               ratings, to-dos assigned to them (records stay for
+//               attendance, accounting and the shift leaderboard)
+//   kept      : an ACTIVE ESNcard application (documents the issued card -
+//               PII stripped except the name), the creation log (name only)
+// Card numbers stay "taken" on purpose: a card is registered to a person on
+// esncard.org and must never move to another account.
+// ------------------------------------------------------------
+exports.deleteMyAccount = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Sign in first.");
+  const uid = request.auth.uid;
+  const problems = [];
+  const step = async (label, fn) => { try { await fn(); } catch (err) { problems.push(label); console.error("deleteMyAccount", label, err?.message); } };
+  const wipeQuery = async (q, mode = "delete", patch = null) => {
+    const snap = await q.get();
+    const batch = db.batch();
+    snap.docs.forEach((d) => (mode === "delete" ? batch.delete(d.ref) : batch.update(d.ref, patch)));
+    if (snap.size) await batch.commit();
+    return snap.size;
+  };
+  const now = new Date();
+
+  await step("registrations", () => wipeQuery(db.collection("registrations").where("uid", "==", uid), "update", { name: "", email: "", phone: FieldValue.delete(), anonymized: true }));
+  await step("waitlist", () => wipeQuery(db.collection("waitlist").where("uid", "==", uid)));
+  await step("esncardOrders", () => wipeQuery(db.collection("esncardOrders").where("uid", "==", uid)));
+  await step("merchOrders", () => wipeQuery(db.collection("merchOrders").where("uid", "==", uid), "update", { name: "", email: "", anonymized: true }));
+  await step("refundRequests", () => wipeQuery(db.collection("refundRequests").where("uid", "==", uid), "update", { name: "", email: "", anonymized: true }));
+  await step("reimbursements", () => wipeQuery(db.collection("reimbursements").where("uid", "==", uid).where("status", "==", "submitted")));
+  await step("reimbursementReceipts", () => wipeQuery(db.collection("reimbursementReceipts").where("uid", "==", uid)));
+  await step("pushTokens", () => wipeQuery(db.collection("pushTokens").where("uid", "==", uid)));
+  await step("feedback", () => wipeQuery(db.collection("feedback").where("uid", "==", uid), "update", { uid: "", anonymized: true }));
+  await step("friendships", async () => {
+    await wipeQuery(db.collection("friendships").where("a", "==", uid));
+    await wipeQuery(db.collection("friendships").where("b", "==", uid));
+  });
+  await step("shiftSignups", async () => {
+    const snap = await db.collection("shiftSignups").where("uid", "==", uid).get();
+    const batch = db.batch();
+    snap.docs.forEach((d) => {
+      const st = d.data().eventStart?.toDate?.() || null;
+      if (st && st < now) batch.update(d.ref, { name: "Former team member", anonymized: true });
+      else batch.delete(d.ref); // frees the slot so the board sees it's open again
+    });
+    if (snap.size) await batch.commit();
+  });
+  await step("boardTodos", () => wipeQuery(db.collection("boardTodos").where("assignedUid", "==", uid), "update", { assignedUid: "", assignedName: "Former member" }));
+  await step("contactMessages", async () => {
+    const snap = await db.collection("contactMessages").where("uid", "==", uid).get();
+    for (const d of snap.docs) {
+      const replies = await d.ref.collection("replies").get();
+      const batch = db.batch();
+      replies.docs.forEach((r) => batch.delete(r.ref));
+      batch.delete(d.ref);
+      await batch.commit();
+    }
+  });
+  await step("esncardApplication", async () => {
+    const ref = db.collection("esncardApplications").doc(uid);
+    const snap = await ref.get();
+    if (!snap.exists) return;
+    const a = snap.data();
+    if (a.status === "active" && a.cardNumber) {
+      // Issued card: keep the record, strip everything but name + card facts.
+      await ref.update({
+        email: "", phone: "", birthday: "", idNumber: "", homeCity: "", homeUniversity: "",
+        fieldOfStudies: "", ideas: "", howFound: "", hostInstitution: "", stayType: "",
+        anonymized: true, anonymizedAt: FieldValue.serverTimestamp(),
+      });
+    } else {
+      await ref.delete();
+    }
+  });
+  await step("applicationProof", async () => {
+    await db.collection("applicationProofs").doc(uid).delete().catch(() => {});
+    await getAdminStorage().bucket().file(`proofs/${uid}/proof.pdf`).delete().catch(() => {});
+  });
+  await step("adminNotes", () => db.collection("adminNotes").doc(uid).delete());
+  await step("userHistory", () => db.collection("userHistory").doc(uid).delete());
+  await step("teamRole", () => db.collection("admins").doc(uid).delete());
+  await step("profile", () => db.collection("users").doc(uid).delete());
+  // The login last - once it's gone the client can't call anything any more.
+  let loginDeleted = true;
+  try { await getAdminAuth().deleteUser(uid); } catch (err) { loginDeleted = false; problems.push("login"); console.error("deleteMyAccount login", err?.message); }
+  return { ok: !problems.length, loginDeleted, problems };
+});
+
+// ------------------------------------------------------------
+// Contact the board (v0.129) - contactMessages/{id} + replies thread.
+// New message / student follow-up -> board gets a push + a mail to the
+// configured from-address inbox. Board reply -> student gets a push AND
+// an e-mail with the answer; the parent doc's status follows along.
+// ------------------------------------------------------------
+async function boardUids() {
+  const snap = await db.collection("admins").get();
+  return snap.docs
+    .filter((d) => ["board", "finance", "superadmin"].includes(d.data().role || "superadmin"))
+    .map((d) => d.id);
+}
+
+exports.onContactMessage = onDocumentCreated(
+  { document: "contactMessages/{msgId}", secrets: [smtpPassword] },
+  async (event) => {
+    try {
+      const m = event.data?.data();
+      if (!m) return;
+      await event.data.ref.update({ lastReplyAt: FieldValue.serverTimestamp() }).catch(() => {});
+      const preview = String(m.message || "").slice(0, 140);
+      await sendPushToUids(await boardUids(), "contact",
+        `New message: ${m.category || "Other"}`,
+        `${m.name || m.email || "A student"}: ${preview}`, "/admin/inbox");
+      const cfg = await getMailConfig();
+      if (cfg) {
+        await queueAndSend(cfg, {
+          to: cfg.fromAddress,
+          subject: `[App contact] ${m.category || "Other"} - ${m.name || m.email || "student"}`,
+          text: `New contact message in the app.\n\nFrom: ${m.name || ""} <${m.email || ""}>\nCategory: ${m.category || "Other"}\n\n${m.message || ""}\n\nReply in the app: ${APP_URL}/admin/inbox`,
+          kind: "contact", refId: event.params.msgId,
+        });
+      }
+    } catch (err) { await logServerError("onContactMessage", err); }
+  });
+
+exports.onContactReply = onDocumentCreated(
+  { document: "contactMessages/{msgId}/replies/{replyId}", secrets: [smtpPassword] },
+  async (event) => {
+    try {
+      const reply = event.data?.data();
+      if (!reply) return;
+      const parentRef = db.collection("contactMessages").doc(event.params.msgId);
+      const parentSnap = await parentRef.get();
+      if (!parentSnap.exists) return;
+      const m = parentSnap.data();
+      // Board-ness is decided HERE, never trusted from the client - and the
+      // owner replying to their own thread always counts as the student side.
+      const isOwner = reply.uid === m.uid;
+      const adminDoc = isOwner ? null : await db.collection("admins").doc(reply.uid).get();
+      const fromBoard = !!(adminDoc && adminDoc.exists);
+      await parentRef.update({
+        status: fromBoard ? "answered" : "open",
+        lastReplyAt: FieldValue.serverTimestamp(),
+      }).catch(() => {});
+
+      if (fromBoard) {
+        const txt = String(reply.text || "");
+        await sendPushToUids([m.uid], "contact", "The board replied 💬",
+          txt.slice(0, 140), "/contact");
+        const cfg = await getMailConfig();
+        if (cfg && m.email) {
+          await queueAndSend(cfg, {
+            to: m.email,
+            subject: `Re: your message to ESN Gent (${m.category || "contact"})`,
+            text: `Hi ${(m.name || "").split(" ")[0] || "there"},\n\nThe ESN Gent board replied to your message:\n\n${txt}\n\nYou can answer or read the whole conversation in the app:\n${APP_URL}/contact\n\nSee you soon,\nESN Gent`,
+            kind: "contact-reply", refId: event.params.msgId,
+          });
+        }
+      } else {
+        const preview = String(reply.text || "").slice(0, 140);
+        await sendPushToUids(await boardUids(), "contact",
+          `Reply from ${m.name || m.email || "a student"}`, preview, "/admin/inbox");
+      }
+    } catch (err) { await logServerError("onContactReply", err); }
+  });
+
+// ------------------------------------------------------------
+// Ticket transfer claim (v0.131) - moved from security rules to a
+// function so we can enforce what rules cannot: ONE ticket per person
+// per event, even via transfers.
+// ------------------------------------------------------------
+exports.claimTicketTransfer = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Sign in to claim a ticket.");
+  const { registrationId, code } = request.data || {};
+  if (!registrationId || !code) throw new HttpsError("invalid-argument", "This transfer link is incomplete.");
+  const uid = request.auth.uid;
+  const regRef = db.collection("registrations").doc(String(registrationId));
+  const acceptAvail = await acceptAvailableCards(); // read before the tx
+
+  await db.runTransaction(async (tx) => {
+    // All reads first (Firestore transaction rule).
+    const regSnap = await tx.get(regRef);
+    if (!regSnap.exists) throw new HttpsError("not-found", "This ticket no longer exists.");
+    const reg = regSnap.data();
+    if (!reg.transferCode || reg.transferCode !== String(code)) {
+      throw new HttpsError("failed-precondition", "This transfer link is invalid or was cancelled.");
+    }
+    if (!["paid", "free"].includes(reg.status)) {
+      throw new HttpsError("failed-precondition", "This ticket isn't confirmed (any payment was refunded or cancelled).");
+    }
+    if (reg.checkedInAt) throw new HttpsError("failed-precondition", "This ticket was already scanned at the door.");
+    if (reg.uid === uid) throw new HttpsError("failed-precondition", "This is already your own ticket.");
+
+    // One ticket per person - the check rules couldn't do.
+    const dupSnap = await tx.get(db.collection("registrations")
+      .where("eventId", "==", reg.eventId)
+      .where("uid", "==", uid)
+      .where("status", "in", ["paid", "free", "pending"]).limit(1));
+    if (!dupSnap.empty) {
+      throw new HttpsError("already-exists", "You already have a ticket for this event - it's one per person, so the transfer can't go through.");
+    }
+
+    // ESNcard-only events: the recipient needs member access too.
+    const evSnap = await tx.get(db.collection("events").doc(reg.eventId));
+    if (evSnap.exists && evSnap.data().esnOnly === true) {
+      const uSnap = await tx.get(db.collection("users").doc(uid));
+      const u = uSnap.exists ? uSnap.data() : {};
+      if (!profileHasCard(u, acceptAvail) && u.alumni !== true) {
+        throw new HttpsError("failed-precondition", "This event is for ESNcard members - link a verified ESNcard on your profile first, then open the link again.");
+      }
+    }
+
+    tx.update(regRef, {
+      uid,
+      name: request.auth.token.name || "",
+      email: request.auth.token.email || "",
+      transferCode: "",
+      claimedWith: String(code),
+      transferredAt: FieldValue.serverTimestamp(),
+    });
+  });
+  return { ok: true };
+});
+
+// ------------------------------------------------------------
+// ESNcard verification & linking (v0.132-0.133) - reads esncard.org's
+// card.json via the Cloudflare-bypass header ESN International gave us.
+// The key lives in Secret Manager, never in the repo.
+// Card states from esncard.org: active | available (bought, not yet
+// activated) | expired | blocked | (empty array = unknown code).
+// ------------------------------------------------------------
+async function esncardLookup(code) {
+  const key = esncardBypass.value();
+  if (!key) throw new HttpsError("failed-precondition", "The ESNcard verification key isn't configured yet.");
+  let res;
+  try {
+    res = await fetch(`https://esncard.org/services/1.0/card.json?code=${encodeURIComponent(code)}`, {
+      headers: { "x-bypass-cf-api": key, "Accept": "application/json" },
+    });
+  } catch (err) {
+    throw new HttpsError("unavailable", "Couldn't reach esncard.org: " + (err?.message || "network error"));
+  }
+  if (res.status === 403 || res.status === 401) {
+    throw new HttpsError("permission-denied", "esncard.org refused the request - the bypass key may be wrong or disabled. Ask ESN International to confirm it.");
+  }
+  if (!res.ok) throw new HttpsError("unavailable", `esncard.org returned ${res.status}.`);
+  let data;
+  try { data = await res.json(); } catch { data = null; }
+  const card = Array.isArray(data) ? data[0] : (data && typeof data === "object" ? data : null);
+  // The API returns [""] / [] for empty fields (e.g. available cards have
+  // no expiry/section yet) - normalise all of that to "".
+  const clean = (v) => {
+    if (Array.isArray(v)) v = v[0];
+    return v == null ? "" : String(v).trim();
+  };
+  if (!card || !clean(card.code)) return { found: false };
+  const status = clean(card.status) || "unknown";
+  const expiry = clean(card["expiration-date"]);
+  const expiryMs = expiry ? Date.parse(expiry) : null;
+  const activated = clean(card["activation date"]);
+  const activatedMs = activated ? Date.parse(activated) : null;
+  return {
+    found: true,
+    code: clean(card.code),
+    tid: clean(card.tid) || null,
+    status, // active | available | expired | blocked | unknown
+    section: clean(card["section-code"]),
+    expiry: expiry || null,
+    expiryMs: Number.isFinite(expiryMs) ? expiryMs : null,
+    activated: activated || null,
+    activatedMs: Number.isFinite(activatedMs) ? activatedMs : null,
+    expired: status === "expired" || (Number.isFinite(expiryMs) && expiryMs < Date.now()),
+    blocked: status === "blocked",
+  };
+}
+
+// Confirm this card number isn't already on ANOTHER account (users +
+// applications) - the "one card, one person" guarantee.
+async function ensureCardFree(code, uid) {
+  const [users, apps] = await Promise.all([
+    db.collection("users").where("esncardCode", "==", code).get(),
+    db.collection("esncardApplications").where("cardNumber", "==", code).get(),
+  ]);
+  // Anonymised applications (v0.138.1) don't block the number: they are the
+  // kept issue-records of DELETED accounts. If that person returns with a
+  // new login, they can relink their own card - possession of the physical
+  // card (its number) is the credential, exactly as for any first link, and
+  // esncard.org still has to confirm the card's real status. Live accounts
+  // can never share a number.
+  if (users.docs.some((d) => d.id !== uid)
+    || apps.docs.some((d) => d.id !== uid && d.data().anonymized !== true)) {
+    throw new HttpsError("already-exists", "This card number is already linked to another account. Double-check the number - or ask at the office if something's off.");
+  }
+}
+
+// Apply a verified lookup to a user profile. Returns a summary for the UI.
+// active    -> verified member, expiry from the API, no board action needed.
+// available -> linked but must still be activated on esncard.org.
+// expired/blocked/not found -> refuse with a clear message.
+async function applyCardLink(uid, code, r) {
+  if (!r.found) throw new HttpsError("not-found", "That card number isn't on esncard.org. Check for typos.");
+  if (r.blocked) throw new HttpsError("failed-precondition", "This card is BLOCKED on esncard.org. Contact ESN International - it can't be used.");
+  if (r.expired) throw new HttpsError("failed-precondition", "This card is EXPIRED. Link a newer card instead.");
+  const base = {
+    esncardCode: code,
+    esncardTid: r.tid || null,
+    esncardSection: r.section || null,
+    esncardStatus: r.status,
+    updatedAt: FieldValue.serverTimestamp(),
+  };
+  if (r.status === "active") {
+    await db.collection("users").doc(uid).set({
+      ...base,
+      esncardVerified: true,
+      esncardExpiresAt: r.expiryMs ? Timestamp.fromMillis(r.expiryMs) : null,
+      esncardActivatedAt: r.activatedMs ? Timestamp.fromMillis(r.activatedMs) : null,
+    }, { merge: true });
+    await appendCardHistory(uid, { action: "activated", code, section: r.section || null, expiry: r.expiry || null });
+    return { status: "active", section: r.section, expiry: r.expiry };
+  }
+  if (r.status === "available") {
+    await db.collection("users").doc(uid).set({
+      ...base,
+      esncardVerified: false,
+      esncardExpiresAt: null, // no expiry until it's activated
+    }, { merge: true });
+    await appendCardHistory(uid, { action: "linked-available", code });
+    return { status: "available" };
+  }
+  throw new HttpsError("failed-precondition", `esncard.org reports an unexpected status ("${r.status}"). Ask at the office.`);
+}
+
+// Card history on userHistory/{uid}.card (board-readable audit trail).
+async function appendCardHistory(uid, entry) {
+  try {
+    await db.collection("userHistory").doc(uid).set({
+      card: FieldValue.arrayUnion({ ...entry, at: Timestamp.now() }),
+    }, { merge: true });
+  } catch { /* audit trail must never block the action */ }
+}
+
+// Ad-hoc check (board) - just returns the lookup, writes nothing.
+exports.verifyEsncard = onCall({ secrets: [esncardBypass] }, async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Sign in first.");
+  const adminSnap = await db.collection("admins").doc(request.auth.uid).get();
+  const role = adminSnap.exists ? (adminSnap.data().role || "superadmin") : null;
+  if (!["superadmin", "board", "finance"].includes(role)) {
+    throw new HttpsError("permission-denied", "Only board members can verify cards.");
+  }
+  const code = String(request.data?.code || "").trim().toUpperCase().replace(/\s+/g, "");
+  if (!/^[A-Z0-9]{6,20}$/.test(code)) throw new HttpsError("invalid-argument", "That doesn't look like an ESNcard number.");
+  return esncardLookup(code);
+});
+
+// Student self-service link/refresh (v0.133). Verifies on esncard.org and
+// links according to the real status - an ACTIVE card is verified on the
+// spot (no board check), an AVAILABLE one is linked pending activation and
+// can be refreshed later. Re-submitting your own code refreshes it.
+exports.linkEsncard = onCall({ secrets: [esncardBypass] }, async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Sign in first.");
+  const uid = request.auth.uid;
+  const code = String(request.data?.code || "").trim().toUpperCase().replace(/\s+/g, "");
+  if (!/^[A-Z0-9]{6,20}$/.test(code)) {
+    throw new HttpsError("invalid-argument", "That doesn't look like an ESNcard number - letters and digits only, no spaces.");
+  }
+  await ensureCardFree(code, uid);
+  const r = await esncardLookup(code);
+  return applyCardLink(uid, code, r);
+});
+
+// Board: assign a physical card to an applicant (v0.133). Verifies it's a
+// real available/active card, links it, flips the application to "active"
+// so the pickup e-mail goes out.
+exports.assignEsncard = onCall({ secrets: [esncardBypass] }, async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Sign in first.");
+  const adminSnap = await db.collection("admins").doc(request.auth.uid).get();
+  const role = adminSnap.exists ? (adminSnap.data().role || "superadmin") : null;
+  if (!["superadmin", "board", "finance"].includes(role)) {
+    throw new HttpsError("permission-denied", "Only board members can assign cards.");
+  }
+  const uid = String(request.data?.uid || "");
+  const code = String(request.data?.code || "").trim().toUpperCase().replace(/\s+/g, "");
+  if (!uid) throw new HttpsError("invalid-argument", "Missing the student.");
+  if (!/^[A-Z0-9]{6,20}$/.test(code)) throw new HttpsError("invalid-argument", "That doesn't look like an ESNcard number.");
+  await ensureCardFree(code, uid);
+  const r = await esncardLookup(code);
+  // The board only hands out AVAILABLE (blank, not-yet-registered) cards. An
+  // already-active card belongs to a person who registered it on esncard.org -
+  // only that person can link it, from their own account page. Blocked/expired/
+  // unknown cards are refused by applyCardLink below.
+  if (r.found && r.status === "active" && !r.expired && !r.blocked) {
+    throw new HttpsError("failed-precondition", "This card is already active on esncard.org - an active card can only be linked by the student from their own account page. You can only assign available (not-yet-registered) cards here.");
+  }
+  const result = await applyCardLink(uid, code, r);
+  // Flip the application so esncardReadyMail sends the pickup e-mail. Assigned
+  // cards are always "available" here (active ones are refused above).
+  await db.collection("esncardApplications").doc(uid).set({
+    status: "active",
+    cardNumber: code,
+    esncardStatus: r.status, // active | available - drives the pickup e-mail wording
+    activatedAt: FieldValue.serverTimestamp(),
+    expiresAt: r.expiryMs ? Timestamp.fromMillis(r.expiryMs) : null,
+  }, { merge: true });
+  await appendCardHistory(uid, { action: "assigned", code, by: request.auth.uid, section: r.section || null });
+  return result;
 });

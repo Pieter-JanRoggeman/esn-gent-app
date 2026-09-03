@@ -2,7 +2,7 @@
 
 The event, ticketing & membership platform of **ESN Gent** — built for ~1,500 international students per year.
 
-**Live:** https://app.esngent.org · Current version: **v0.124-beta**
+**Live:** https://app.esngent.org · Current version: **v0.138.1-beta**
 
 ## What it does
 
@@ -22,7 +22,7 @@ The event, ticketing & membership platform of **ESN Gent** — built for ~1,500 
 ## Tech stack
 
 - **Frontend:** vanilla JS single-page app (`public/app.js`) — no build step, Firebase v10 CDN modules, clean URLs, service-worker PWA
-- **Backend:** Firebase — Hosting, Firestore, Cloud Functions (2nd gen, Node 20), Storage, Cloud Messaging, Auth (**Google sign-in only**)
+- **Backend:** Firebase — Hosting, Firestore, Cloud Functions (2nd gen, Node 22), Storage, Cloud Messaging, Auth (**Google sign-in only**)
 - **Payments:** Stripe Checkout + webhooks (currently **TEST mode**)
 - **Integrations:** Google Calendar API, UGent DSA API, Gemini, SMTP mail
 
@@ -62,7 +62,7 @@ firebase deploy --only functions,hosting,firestore,storage
 Server secrets live in **Firebase Secret Manager**, never in this repo:
 
 ```
-STRIPE_SECRET_KEY   STRIPE_WEBHOOK_SECRET   GEMINI_API_KEY   SMTP_PASSWORD   DSA_API_KEY
+STRIPE_SECRET_KEY   STRIPE_WEBHOOK_SECRET   GEMINI_API_KEY   SMTP_PASSWORD   DSA_API_KEY   ESNCARD_BYPASS_KEY
 ```
 
 Set one with `firebase functions:secrets:set NAME`, then redeploy functions.

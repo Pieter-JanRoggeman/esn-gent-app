@@ -35,6 +35,11 @@ service cloud.firestore {
     function isScanner() {
       return hasStaffRole() && staffRole() in ['superadmin', 'board', 'finance', 'volunteer'];
     }
+    // Alumni network manager (v0.125): the alumni coordinator maintains the
+    // alumni list and may read function history — nothing else.
+    function isAlumniCoord() {
+      return hasStaffRole() && staffRole() == 'alumnicoord';
+    }
     // Access to the board-meetings space (AB + alumni coordinator may
     // attend the AV per the statutes, Art. 10 §5 / Art. 7 §8).
     function isMeetings() {
@@ -43,10 +48,6 @@ service cloud.firestore {
 
     function eventData(eid) {
       return get(/databases/$(database)/documents/events/$(eid)).data;
-    }
-
-    function myProfile() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
     }
 
     // Events: anyone can read published events; board manages them.
@@ -88,23 +89,10 @@ service cloud.firestore {
         && resource.data.get('checkedInAt', null) == null
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['transferCode']);
 
-      // Ticket transfer, step 2: the recipient claims it by proving they
-      // know the code (from the link) — without ever being able to read
-      // the ticket first. The claim must move the ticket to themselves,
-      // consume the code, and (for ESNcard-only events) they must hold a
-      // verified card.
-      allow update: if isSignedIn()
-        && resource.data.get('transferCode', '') != ''
-        && request.resource.data.get('claimedWith', '') == resource.data.transferCode
-        && request.resource.data.transferCode == ''
-        && request.resource.data.uid == request.auth.uid
-        && resource.data.status in ['paid', 'free']
-        && resource.data.get('checkedInAt', null) == null
-        && (eventData(resource.data.eventId).get('esnOnly', false) != true
-            || myProfile().get('esncardVerified', false) == true
-            || myProfile().get('alumni', false) == true)
-        && request.resource.data.diff(resource.data).affectedKeys()
-            .hasOnly(['uid', 'name', 'email', 'transferCode', 'claimedWith', 'transferredAt']);
+      // Ticket transfer, step 2 (v0.131): claiming moved to the
+      // claimTicketTransfer Cloud Function - rules can't check "does the
+      // recipient already hold a ticket for this event" (no queries), so
+      // the direct-update path is closed.
 
       // Self-cancel: own FREE registrations until 2 hours before the event.
       // Board can always remove a registration.
@@ -145,6 +133,38 @@ service cloud.firestore {
 
     // Event feedback: one per registration (doc id = registration id),
     // only from people who were actually checked in.
+    // Contact the board (v0.129): signed-in students write messages, the
+    // board reads all and both sides reply in a thread (subcollection).
+    // Status flips (open/answered) are written by the Cloud Function; the
+    // owner may only close their own message, the board may set anything.
+    match /contactMessages/{msgId} {
+      allow read: if isBoard() || (isSignedIn() && resource.data.uid == request.auth.uid);
+      allow create: if isSignedIn()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.message is string
+        && request.resource.data.message.size() >= 5
+        && request.resource.data.message.size() <= 2000
+        && request.resource.data.category is string
+        && request.resource.data.category.size() <= 40;
+      allow update: if (isBoard()
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'category']))
+        || (isSignedIn() && resource.data.uid == request.auth.uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
+          && request.resource.data.status == 'closed');
+      allow delete: if isBoard();
+      match /replies/{replyId} {
+        allow read: if isBoard()
+          || (isSignedIn() && get(/databases/$(database)/documents/contactMessages/$(msgId)).data.uid == request.auth.uid);
+        allow create: if isSignedIn()
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.text is string
+          && request.resource.data.text.size() >= 1
+          && request.resource.data.text.size() <= 2000
+          && (isBoard()
+            || get(/databases/$(database)/documents/contactMessages/$(msgId)).data.uid == request.auth.uid);
+      }
+    }
+
     match /feedback/{regId} {
       allow read: if isBoard() || (isSignedIn() && resource.data.uid == request.auth.uid);
       allow create: if isSignedIn()
@@ -185,11 +205,16 @@ service cloud.firestore {
     }
 
     match /users/{uid} {
-      allow read: if isSignedIn() && (request.auth.uid == uid || isBoard());
+      // Alumni coordinator reads users too (v0.125): needed to manage the
+      // alumni network — a trusted team role.
+      allow read: if isSignedIn() && (request.auth.uid == uid || isBoard() || isAlumniCoord());
       // Friendship-tree people picker: the circle may LIST alumni profiles
       // (only queries filtered to alumni == true match this rule).
       allow list: if isFriendCircle() && resource.data.alumni == true;
       allow write: if isBoard();
+      // Alumni coordinator may toggle ONLY the alumni flag (v0.125).
+      allow update: if isAlumniCoord()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['alumni']);
       allow create: if isSignedIn() && request.auth.uid == uid
         && request.resource.data.get('esncardVerified', false) == false
         && request.resource.data.get('alumni', false) == false;
@@ -323,6 +348,22 @@ service cloud.firestore {
       allow update: if false;
     }
 
+    // Creation log (v0.135) — who created / deleted / cancelled events,
+    // board meetings, news and merch. Written by board actions, readable
+    // by the whole board, never editable or deletable from the client
+    // (the nightly maintenance prunes entries older than a year).
+    // Shape-limited so it can't be abused as free-form storage.
+    match /auditLog/{entryId} {
+      allow read: if isBoard();
+      allow create: if isBoard()
+        && request.resource.data.keys().hasOnly(['at', 'uid', 'name', 'action', 'kind', 'refId', 'title'])
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.action in ['created', 'deleted', 'cancelled']
+        && request.resource.data.title is string
+        && request.resource.data.title.size() <= 200;
+      allow update, delete: if false;
+    }
+
     // Push notification device tokens — each user registers their own
     // device(s). Nobody can read the token list from the client; only
     // the Cloud Functions (admin SDK) use it to send.
@@ -333,6 +374,13 @@ service cloud.firestore {
     }
 
     // Web-push VAPID public key (public by design) — superadmin sets it once.
+    // Site banner (v0.131): board-configurable announcement strip shown
+    // at the top of every page (beta notice, warnings, big news).
+    match /settings/announcement {
+      allow read: if true;
+      allow create, update, delete: if isFinance();
+    }
+
     match /settings/push {
       allow read: if true;
       allow create, update, delete: if isSuper();
@@ -584,6 +632,7 @@ service cloud.firestore {
     // board actions only; deletable by the user on account deletion.
     match /userHistory/{uid} {
       allow read, write: if isBoard();
+      allow read: if isAlumniCoord(); // function history on the alumni page (v0.125)
       allow delete: if isSignedIn() && request.auth.uid == uid;
     }
 
