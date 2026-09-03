@@ -1752,6 +1752,61 @@ exports.declineEsncardApplication = onCall(
 // ------------------------------------------------------------
 // Merch purchase via Stripe Checkout (pickup only)
 // ------------------------------------------------------------
+// Reserve & pay at pickup (v0.140) - the cash-friendly path the product page
+// always promised. Creates a "requested" order (no Stripe): the student shows
+// the order QR at office hours, pays cash there, staff taps "Mark paid".
+// Reservations don't hard-hold stock (they can no-show) - but a sold-out
+// item can't be reserved, and it's one open reservation per product per person.
+exports.reserveMerchOrder = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Sign in first.");
+  const { productId, variantId, quantity: qRaw } = request.data || {};
+  const quantity = Math.max(1, Math.min(10, parseInt(qRaw, 10) || 1));
+  if (!productId) throw new HttpsError("invalid-argument", "Missing product.");
+  const pSnap = await db.collection("products").doc(String(productId)).get();
+  if (!pSnap.exists) throw new HttpsError("not-found", "Product not found.");
+  const product = pSnap.data();
+  if (!product.published) throw new HttpsError("failed-precondition", "This product is not for sale.");
+  let variant = null;
+  if (Array.isArray(product.variants) && product.variants.length) {
+    variant = product.variants.find((v) => v.id === variantId);
+    if (!variant) throw new HttpsError("invalid-argument", "Please choose an option.");
+  }
+  if (variant && variant.stock) {
+    const sold = (product.variantSold && product.variantSold[variant.id]) || 0;
+    if (sold + quantity > variant.stock) throw new HttpsError("resource-exhausted", `"${variant.name}" is sold out.`);
+  } else if (!variant && product.stock) {
+    if ((product.sold || 0) + quantity > product.stock) throw new HttpsError("resource-exhausted", "This item is sold out.");
+  }
+  const open = await db.collection("merchOrders")
+    .where("uid", "==", request.auth.uid).where("productId", "==", String(productId)).get();
+  if (open.docs.some((d) => d.data().status === "requested")) {
+    throw new HttpsError("already-exists", "You already have an open reservation for this item - it's in My tickets.");
+  }
+  const profSnap = await db.collection("users").doc(request.auth.uid).get();
+  const isMember = profSnap.exists && profileHasCard(profSnap.data(), await acceptAvailableCards());
+  const base = variant && variant.price != null ? variant.price : product.price;
+  const member = variant && variant.price != null ? variant.priceEsn : product.priceEsn;
+  const unit = isMember && typeof member === "number" ? member : base;
+  if (!unit || unit <= 0) throw new HttpsError("failed-precondition", "This item can't be reserved.");
+  const orderRef = db.collection("merchOrders").doc();
+  await orderRef.set({
+    uid: request.auth.uid,
+    name: request.auth.token.name || "",
+    email: request.auth.token.email || "",
+    productId: String(productId),
+    productName: product.name || "",
+    variantId: variant ? variant.id : null,
+    variantName: variant ? variant.name : null,
+    quantity,
+    amountTotal: unit * quantity,
+    currency: product.currency || "eur",
+    status: "requested",
+    usedEsncard: isMember,
+    createdAt: FieldValue.serverTimestamp(),
+  });
+  return { orderId: orderRef.id, amount: unit * quantity };
+});
+
 exports.createMerchCheckout = onCall(
   { secrets: [stripeSecretKey] },
   async (request) => {
@@ -2425,16 +2480,42 @@ exports.betaResetData = onCall({ timeoutSeconds: 540 }, async (request) => {
     throw new HttpsError("failed-precondition", "Missing confirmation.");
   }
 
+  // Everything TRANSACTIONAL from the beta is wiped (v0.139 - kept current
+  // with every collection added since v0.9x). Deliberately KEPT: users &
+  // logins, admins (roles), settings, eventTags, venues, partners, products,
+  // news, codexSongs, shiftTemplates, friendships, pushTokens - accounts,
+  // configuration and content survive; transactions don't.
   const wipe = [
     "events", "registrations", "waitlist", "feedback",
     "shifts", "shiftSignups", "refundRequests",
     "merchOrders", "esncardApplications", "applicationProofs",
     "boardMeetings", "boardTodos", "reimbursements", "reimbursementReceipts",
-    "userHistory",
+    "userHistory", "esncardOrders", "cashCounts", "auditLog",
+    "mailQueue", "errorLog", "adminNotes",
   ];
-  // Proof-of-exchange PDFs live in Storage - wipe that folder too.
+  // Storage: proof-of-exchange files + images of (deleted) events. Product,
+  // news, partner and venue images stay - those collections stay.
   try { await getAdminStorage().bucket().deleteFiles({ prefix: "proofs/" }); } catch { /* none */ }
+  try { await getAdminStorage().bucket().deleteFiles({ prefix: "images/events/" }); } catch { /* none */ }
   const counts = {};
+  // Contact messages carry a "replies" SUBCOLLECTION - deleting the parent
+  // doc alone would strand those, so they go doc by doc.
+  {
+    let n = 0;
+    for (;;) {
+      const snap = await db.collection("contactMessages").limit(100).get();
+      if (snap.empty) break;
+      for (const d of snap.docs) {
+        const replies = await d.ref.collection("replies").get();
+        const batch = db.batch();
+        replies.docs.forEach((r) => batch.delete(r.ref));
+        batch.delete(d.ref);
+        await batch.commit();
+        n++;
+      }
+    }
+    counts.contactMessages = n;
+  }
   for (const col of wipe) {
     let n = 0;
     // Batched deletes, 400 at a time, until the collection is empty.
@@ -2449,13 +2530,23 @@ exports.betaResetData = onCall({ timeoutSeconds: 540 }, async (request) => {
     counts[col] = n;
   }
 
-  // Applications are gone → clear card status on profiles (roles stay).
+  // Profiles stay, but everything DERIVED from wiped data is cleared:
+  // card link & status, passport XP/level, this-year birthday marker.
+  // Roles, notification prefs, bucketlist ticks and profile details stay.
   let usersReset = 0;
   const usersSnap = await db.collection("users").get();
   for (const d of usersSnap.docs) {
     const u = d.data();
-    if (u.esncardVerified || u.esncardCode) {
-      await d.ref.update({ esncardVerified: FieldValue.delete(), esncardCode: FieldValue.delete() });
+    if (u.esncardVerified !== undefined || u.esncardCode || u.esncardStatus || u.esncardExpiresAt
+      || u.passportXp || u.passportLevel || u.birthdayWishedYear) {
+      await d.ref.update({
+        esncardVerified: FieldValue.delete(), esncardCode: FieldValue.delete(),
+        esncardExpiresAt: FieldValue.delete(), esncardActivatedAt: FieldValue.delete(),
+        esncardStatus: FieldValue.delete(), esncardSection: FieldValue.delete(),
+        esncardTid: FieldValue.delete(),
+        passportXp: FieldValue.delete(), passportLevel: FieldValue.delete(),
+        birthdayWishedYear: FieldValue.delete(),
+      });
       usersReset++;
     }
   }
@@ -2810,6 +2901,21 @@ exports.pushReminders = onSchedule("every 30 minutes", async () => {
     }
   }
   } catch (err) { await logServerError("pushReminders", err); }
+
+  // Stale pending registrations (v0.140): ALSO swept here every 30 minutes -
+  // the nightly-only sweep meant an abandoned checkout whose expiry webhook
+  // got lost could sit on its capacity hold for up to a day.
+  try {
+    const stale = await db.collection("registrations").where("status", "==", "pending").limit(300).get();
+    let released = 0;
+    for (const d of stale.docs) {
+      const created = d.data().createdAt && d.data().createdAt.toDate ? d.data().createdAt.toDate() : null;
+      if (!created || Date.now() - created.getTime() < 2 * 3600e3) continue;
+      await releasePendingRegistration(d.ref);
+      released++;
+    }
+    if (released) console.log(`pushReminders sweep: released ${released} stale pending registrations`);
+  } catch (err) { await logServerError("stale-pending sweep", err); }
 });
 
 // ------------------------------------------------------------

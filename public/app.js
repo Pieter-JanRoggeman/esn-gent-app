@@ -54,8 +54,27 @@ try {
 // Version & changelog. Bump APP_VERSION and add an entry on every
 // deploy - everyone sees the number, staff see the details.
 // ------------------------------------------------------------
-const APP_VERSION = "0.138.1-beta";
+const APP_VERSION = "0.140-beta";
 const CHANGELOG = [
+  {
+    version: "0.140-beta",
+    date: "2026-09-03",
+    notes: [
+      "From your feedback: a Share button on every event page (native share sheet, or the link on your clipboard), and the 'Happening now' badge moved out of the tag row to the bottom of the card.",
+      "Shop: 'Reserve - pay cash at pickup' is back as a real button next to Order - one open reservation per item, the order QR lands in My tickets, staff marks it paid at the office.",
+      "Event form hardening: a double-tap can no longer create two events, invisible-character titles are stripped, creating an event in the past asks first, prices can't go negative, and a broken photo now says what's wrong instead of showing an exclamation mark.",
+      "Assigning a volunteer to a BOARD shift slot now asks before doing it; abandoned checkouts release their held spots within 30 minutes instead of overnight.",
+      "Guide links like ESNcard and Codex now render as real links, waterzooi appears once, and the FAQ answers whether you can sign in without Google (plus a note to watch WhatsApp for last-minute shifts).",
+    ],
+  },
+  {
+    version: "0.139-beta",
+    date: "2026-09-03",
+    notes: [
+      "Pay buttons now show a spinner with what is happening ('Opening secure checkout…', 'Registering you…') the moment you tap - the few seconds before Stripe opens no longer feel frozen.",
+      "The superadmin beta reset now covers everything added since it was written: contact messages (with replies), the creation log, cash counts, mail queue, error log, board notes and old card orders - plus event images in storage - and it clears card status, passport XP and levels on every profile. Accounts, roles, settings, tags, venues, partners, shop products, news and the codex stay.",
+    ],
+  },
   {
     version: "0.138.1-beta",
     date: "2026-09-03",
@@ -1045,7 +1064,8 @@ function renderRich(text) {
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
     .replace(/\*([^*]+)\*/g, "<em>$1</em>")
     .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
-    .replace(/\[([^\]]+)\]\((#\/[^)\s]*)\)/g, '<a href="$2">$1</a>');
+    .replace(/\[([^\]]+)\]\((#\/[^)\s]*)\)/g, '<a href="$2">$1</a>')
+    .replace(/\[([^\]]+)\]\((\/[a-z0-9\-/]*)\)/g, '<a href="$2">$1</a>');
   const lines = esc(text || "").split("\n");
   let html = "", inList = false, para = [];
   const flushPara = () => { if (para.length) { html += `<p>${para.join("<br>")}</p>`; para = []; } };
@@ -2970,7 +2990,6 @@ Welcome to Ghent! The basics, in order:
 - [ ] Gravensteen castle (yes, it has a moat)
 - [ ] Graffiti street (Werregarenstraat)
 - [ ] Eat cuberdons ("neuzekes") from a market stall
-- [ ] Try a real Belgian waterzooi
 - [ ] Watch the sunset from St Michael's Bridge
 - [ ] Swim at Blaarmeersen in summer
 - [ ] Survive a night in the Overpoort
@@ -3691,6 +3710,24 @@ function wirePushOffer(rerender) {
 // Small helpers
 // ------------------------------------------------------------
 // Material Symbols (Google Fonts) - professional icons instead of emojis.
+// Busy state for buttons that talk to the server before something visible
+// happens (Stripe checkout takes a few seconds - cold starts included).
+// Spinner + label inside the button; btnIdle restores the original content.
+function btnBusy(btn, label) {
+  if (!btn || btn.dataset.busyHtml) return;
+  btn.dataset.busyHtml = btn.innerHTML;
+  btn.disabled = true;
+  btn.classList.add("is-busy");
+  btn.innerHTML = `<span class="btn-spin" aria-hidden="true"></span> ${label}`;
+}
+function btnIdle(btn) {
+  if (!btn || btn.dataset.busyHtml == null) return;
+  btn.innerHTML = btn.dataset.busyHtml;
+  delete btn.dataset.busyHtml;
+  btn.disabled = false;
+  btn.classList.remove("is-busy");
+}
+
 function mi(name, size = "") {
   // aria-hidden: the ligature text ("celebration", "qr_code_scanner") is
   // meaningless to screen readers - the adjacent label carries the meaning.
@@ -3961,7 +3998,7 @@ async function compressImage(file) {
   const img = new Image();
   const url = URL.createObjectURL(file);
   try {
-    await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = url; });
+    await new Promise((res, rej) => { img.onload = res; img.onerror = () => rej(new Error("That image file cannot be read - it may be damaged or an unsupported format. Try a different photo (JPG or PNG).")); img.src = url; });
   } finally {
     URL.revokeObjectURL(url);
   }
@@ -3995,7 +4032,7 @@ async function compressCardImage(file) {
   const img = new Image();
   const url = URL.createObjectURL(file);
   try {
-    await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = url; });
+    await new Promise((res, rej) => { img.onload = res; img.onerror = () => rej(new Error("That image file cannot be read - it may be damaged or an unsupported format. Try a different photo (JPG or PNG).")); img.src = url; });
   } finally {
     URL.revokeObjectURL(url);
   }
@@ -4578,13 +4615,14 @@ function eventCard(ev) {
         <span class="m">${d.toLocaleDateString("en-GB", { month: "short" })}</span>
       </div>
       <div class="card-body">
-        <h3><a href="/event/${ev.id}">${esc(ev.title)}</a>${ev.tagName && !ev.officeHours && !ev.cancelled ? ` ${tagBadge(ev)}` : ""}${isLive ? ` <span class="badge badge-live">Happening now</span>` : ""}</h3>
+        <h3><a href="/event/${ev.id}">${esc(ev.title)}</a>${ev.tagName && !ev.officeHours && !ev.cancelled ? ` ${tagBadge(ev)}` : ""}</h3>
         <div class="event-meta">
           <span>${mi("event", "sm")} ${fmtDate(ev.start)} · ${fmtTime(ev.start)}${isMultiDayEvent(ev) ? ` → ${fmtDate(ev.end)}` : ""}</span>
           <span>${mi("location_on", "sm")} ${esc(ev.location || "Location TBA")}</span>
         </div>
         <p class="event-desc">${esc(plainText(ev.description).slice(0, 120))}${plainText(ev.description).length > 120 ? "…" : ""}</p>
         <div class="card-foot">
+          ${isLive ? `<span class="badge badge-live">${mi("sensors", "sm")} Happening now</span> ` : ""}
           ${ev.cancelled ? `<span class="badge badge-soldout">CANCELLED</span>`
           : ev.officeHours ? `<span class="badge badge-esn">Office hours - drop in</span>`
           : ev.regMode === "none" ? `<span class="badge badge-esn">just show up${ev.price ? ` - ${fmtMoney(ev.price, ev.currency)} at the door` : ""}</span>`
@@ -4836,6 +4874,7 @@ async function viewEvent(id) {
           </ul>
           <div class="rich">${renderRich(ev.description)}</div>
           <div class="cal-links">
+            <button class="btn btn-ghost btn-sm" style="color:var(--esn-dark)" id="btn-share-event">${mi("ios_share", "sm")} Share</button>
             <a class="btn btn-ghost btn-sm" style="color:var(--esn-dark)" href="${gcalUrl(ev)}" target="_blank" rel="noopener">Add to Google Calendar</a>
             <button class="btn btn-ghost btn-sm" style="color:var(--esn-dark)" id="btn-ics">Add to Apple/Outlook (.ics)</button>
             ${ev.location ? `<a class="btn btn-ghost btn-sm" style="color:var(--esn-dark)" href="${mapsUrlFor(ev)}" target="_blank" rel="noopener">Open in Google Maps</a>` : ""}
@@ -4945,6 +4984,15 @@ async function viewEvent(id) {
   `;
 
   document.getElementById("btn-ics").onclick = () => downloadIcs(ev);
+  // Share (v0.140): native share sheet where available, clipboard otherwise.
+  document.getElementById("btn-share-event")?.addEventListener("click", async () => {
+    const url = `${location.origin}/event/${ev.id}`;
+    if (navigator.share) {
+      try { await navigator.share({ title: ev.title, text: `${ev.title} - ${fmtDate(ev.start)} · join me!`, url }); return; } catch { /* cancelled */ }
+    }
+    try { await navigator.clipboard.writeText(url); toast("Event link copied - paste it anywhere.", "success"); }
+    catch { toast(url, "warn"); }
+  });
   document.getElementById("btn-login-first")?.addEventListener("click", signIn);
 
   // Complete profile before registering: name, birthday, phone, nationality,
@@ -4989,8 +5037,7 @@ async function viewEvent(id) {
               const optId = options ? document.getElementById("wl-opt").value : null;
               const opt = options ? options.find((o) => o.id === optId) : null;
               const price = options ? optEffective(opt) : effectivePrice;
-              claimBtn.disabled = true;
-              claimBtn.textContent = "One moment…";
+              btnBusy(claimBtn, price ? "Opening secure checkout…" : "Claiming your spot…");
               try {
                 if (!price) {
                   const registerFree = httpsCallable(functions, "registerFree");
@@ -5004,8 +5051,7 @@ async function viewEvent(id) {
                 }
               } catch (err) {
                 toast(err.message || "Could not claim the spot", "error");
-                claimBtn.disabled = false;
-                claimBtn.textContent = "Claim my spot";
+                btnIdle(claimBtn);
               }
             };
           } else {
@@ -5071,8 +5117,7 @@ async function viewEvent(id) {
 
   document.getElementById("btn-register-free")?.addEventListener("click", async (e) => {
     if (!(await requireProfile())) return;
-    e.target.disabled = true;
-    e.target.textContent = "Registering…";
+    btnBusy(e.target, "Registering you…");
     try {
       // (The old Spark-era direct-write fallback is gone - it swallowed the
       // REAL error from registerFree behind a rules permission-denied.)
@@ -5083,8 +5128,7 @@ async function viewEvent(id) {
     } catch (err) {
       if (capacityFail(err)) return;
       toast(err.message || "Registration failed", "error");
-      e.target.disabled = false;
-      e.target.textContent = "Register for free";
+      btnIdle(e.target);
     }
   });
 
@@ -5094,8 +5138,7 @@ async function viewEvent(id) {
     const opt = options.find((o) => o.id === optId);
     if (!opt) return;
     const price = optEffective(opt);
-    e.target.disabled = true;
-    e.target.textContent = "One moment…";
+    btnBusy(e.target, price === 0 ? "Registering you…" : "Opening secure checkout…");
     try {
       if (price === 0) {
         const registerFree = httpsCallable(functions, "registerFree");
@@ -5111,15 +5154,13 @@ async function viewEvent(id) {
     } catch (err) {
       if (capacityFail(err)) return;
       toast(err.message || "Could not continue", "error");
-      e.target.disabled = false;
-      e.target.textContent = "Continue →";
+      btnIdle(e.target);
     }
   });
 
   document.getElementById("btn-buy")?.addEventListener("click", async (e) => {
     if (!(await requireProfile())) return;
-    e.target.disabled = true;
-    e.target.textContent = "Preparing checkout…";
+    btnBusy(e.target, "Opening secure checkout…");
     try {
       const createCheckoutSession = httpsCallable(functions, "createCheckoutSession");
       const res = await createCheckoutSession({ eventId: ev.id, policyAgreed: true });
@@ -5127,8 +5168,7 @@ async function viewEvent(id) {
     } catch (err) {
       if (capacityFail(err)) return;
       toast(err.message || "Could not start checkout", "error");
-      e.target.disabled = false;
-      e.target.textContent = "Buy with Stripe →";
+      btnIdle(e.target);
     }
   });
 
@@ -5893,7 +5933,8 @@ async function viewProduct(id) {
             ? `<span class="badge badge-soldout">Sold out</span><p class="form-hint" style="margin-top:8px">All gone for now - ask at <a href="/office">office hours</a> whether a restock is coming.</p>`
             : !currentUser
               ? `<button class="btn btn-google btn-block" id="btn-login-first">${googleG()}<span>Sign in to order</span></button>`
-              : `<button class="btn btn-magenta btn-block product-cta" id="btn-merch-buy">${mi("shopping_bag", "sm")} Order · <span id="merch-total">${fmtMoney(initialUnit, p.currency)}</span></button>`}
+              : `<button class="btn btn-magenta btn-block product-cta" id="btn-merch-buy">${mi("shopping_bag", "sm")} Order · <span id="merch-total">${fmtMoney(initialUnit, p.currency)}</span></button>
+                 <button class="btn btn-ghost btn-block btn-ink" id="btn-merch-reserve">${mi("storefront", "sm")} Reserve - pay cash at pickup</button>`}
           <ol class="product-steps">
             <li><span>${mi("credit_card", "sm")}</span>Pay securely online</li>
             <li><span>${mi("meeting_room", "sm")}</span>Pick it up at the ESN office during <a href="/office">office hours</a></li>
@@ -5929,6 +5970,21 @@ async function viewProduct(id) {
       refreshPrice();
     };
   });
+  document.getElementById("btn-merch-reserve")?.addEventListener("click", async (e) => {
+    const v = currentVariant();
+    const qty = Math.max(1, Math.min(10, parseInt(qtyEl.value, 10) || 1));
+    if (merchLeft(v) < qty) { toast(merchLeft(v) <= 0 ? "This item is sold out." : `Only ${merchLeft(v)} left.`, "warn"); return; }
+    btnBusy(e.target, "Reserving…");
+    try {
+      const res = await httpsCallable(functions, "reserveMerchOrder")({ productId: p.id, variantId: v ? v.id : null, quantity: qty });
+      toast(`Reserved! Pay ${fmtMoney(res.data.amount, p.currency)} in cash at office hours - your order QR is in My tickets.`, "success");
+      navigate("/order/" + res.data.orderId);
+      return;
+    } catch (err) {
+      toast(err?.message || "Could not reserve.", err?.code === "functions/already-exists" ? "warn" : "error");
+    }
+    btnIdle(e.target);
+  });
   document.querySelectorAll("#merch-qty-step .qty-btn").forEach((b) => {
     b.onclick = () => { qtyEl.value = (parseInt(qtyEl.value, 10) || 1) + parseInt(b.dataset.d, 10); refreshPrice(); };
   });
@@ -5944,8 +6000,7 @@ async function viewProduct(id) {
       viewProduct(p.id);
       return;
     }
-    e.target.disabled = true;
-    e.target.textContent = "One moment…";
+    btnBusy(e.target, "Opening secure checkout…");
     try {
       const createMerchCheckout = httpsCallable(functions, "createMerchCheckout");
       const res = await createMerchCheckout({ productId: p.id, variantId: v ? v.id : null, quantity: qty });
@@ -5961,8 +6016,7 @@ async function viewProduct(id) {
       }
       toast("Could not start the payment: " + (err?.message || "unknown error"), "error");
     }
-    e.target.disabled = false;
-    e.target.innerHTML = `${mi("shopping_bag", "sm")} Order · <span id="merch-total">${fmtMoney(merchUnitPrice(p, currentVariant(), eligible) * qty, p.currency)}</span>`;
+    btnIdle(e.target);
   });
 }
 
@@ -6462,7 +6516,7 @@ function viewInstall() {
     <div class="form-card">
       <strong>Why bother?</strong>
       <ul style="margin:8px 0 0 18px;font-size:.9rem">
-        <li style="margin-bottom:4px">${mi("qr_code_2", "sm")} Your tickets work <strong>offline</strong> - no festival-wifi panic at the door.</li>
+        <li style="margin-bottom:4px">${mi("qr_code_2", "sm")} Your tickets work <strong>offline</strong> - they scan at the door even with zero signal.</li>
         <li style="margin-bottom:4px">${mi("notifications_active", "sm")} Push for new events, your waitlist spot, ticket &amp; ESNcard updates and passport stamps.</li>
         <li style="margin-bottom:4px">${mi("workspace_premium", "sm")} One tap from your home screen to your <a href="/passport">ESN Passport</a>.</li>
       </ul>
@@ -6610,6 +6664,8 @@ function faqStudentItems() {
       `Our office: <strong>${esc(orgInfo.officeAddress)}</strong> - office hours <strong>${esc(orgInfo.officeHoursText)}</strong>. See the <a href="/office">Office page</a> for the map and the upcoming sessions. Come by for your ESNcard, questions or just a chat.`],
     ["How do I sign in?",
       `With your Google account - tap <strong>Sign in</strong> and pick your Gmail. No separate password needed.`],
+    ["Can I sign in without a Google account?",
+      `Not at the moment - Google sign-in is the only method, which keeps the app password-free and your account protected by Google's security. Any Google account works (it doesn't have to be your university one), and creating one is free at <a href="https://accounts.google.com" target="_blank" rel="noopener">accounts.google.com</a>.`],
     ["How do I register for an event?",
       `Open the event and tap <strong>Register</strong> (free events) or <strong>Buy</strong> (paid events, secure checkout via Stripe). Your ticket appears under <a href="/my-tickets">My tickets</a>.`],
     ["Where is my ticket?",
@@ -6662,7 +6718,7 @@ function viewFaq() {
   ];
   const volunteer = [
     ["How do shiftlists work?",
-      `Open <a href="/shifts">Shifts</a> → pick an event → tap <strong>I'll take this shift</strong> on an open spot (leave again if plans change - not last-minute please). Your upcoming shifts and your shift count are at the top. Some events appear here before they're public - that's normal, students can't see them yet.`],
+      `Open <a href="/shifts">Shifts</a> → pick an event → tap <strong>I'll take this shift</strong> on an open spot (leave again if plans change - not last-minute please). Your upcoming shifts and your shift count are at the top. Some events appear here before they're public - that's normal, students can't see them yet. And keep an eye on the board WhatsApp: last-minute open or freed shifts are called out there - jump in if you can.`],
     ["I paid something for ESN - how do I get it back?",
       `Account menu → <a href="/reimburse">Reimbursements</a>. Fill in the expense (linked to an event or not), add photos of the receipts, and submit. The treasurer &amp; president review it and pay it to your IBAN - you can follow the status on the same page.`],
   ];
@@ -7351,16 +7407,14 @@ async function viewAccount() {
   document.getElementById("btn-signout-account").onclick = () => signOut(auth);
 
   document.getElementById("btn-card-pay")?.addEventListener("click", async (e) => {
-    e.target.disabled = true;
-    e.target.textContent = "One moment…";
+    btnBusy(e.target, "Opening secure checkout…");
     try {
       const fn = httpsCallable(functions, "createEsncardCheckout");
       const res = await fn({});
       location.href = res.data.url;
     } catch (err) {
       toast("Online payment isn't available right now - you can always pay in cash during office hours. (" + (err.message || "") + ")", "error");
-      e.target.disabled = false;
-      e.target.textContent = `Pay ${fmtMoney(myCardPrice())} online`;
+      btnIdle(e.target);
     }
   });
 
@@ -7892,7 +7946,7 @@ async function viewEsncardApply() {
       // Default path: straight to the secure online payment. Cash is the
       // explicit opt-out; free (team) cards skip payment entirely.
       if (myCardPrice() > 0 && !payCash) {
-        if (submitBtn) submitBtn.textContent = "Opening secure payment…";
+        btnBusy(submitBtn, "Opening secure payment…");
         toast("Application saved - taking you to the secure payment.", "success");
         try {
           const fn = httpsCallable(functions, "createEsncardCheckout");
@@ -8783,7 +8837,7 @@ async function viewAdminAnalytics() {
 
 const ROLE_LABELS = {
   superadmin: "Superadmin - everything, incl. managing this team",
-  finance: "Finance - everything board can do + reimbursements & IBANs (treasurer/president)",
+  finance: "Finance - everything board can do + reimbursements & IBANs (meant for the treasurer; the president can have it too but does not need to)",
   board: "Board - events, users, ESNcards, registrations, board meetings",
   volunteer: "Volunteer - scan tickets & check people in only",
   advisory: "Advisory Board (AB) - ALUMNI extension of the board, not board members: meetings & minutes read-only, advice (AB President + Advisors)",
@@ -11873,7 +11927,7 @@ async function viewAdminEventForm(eventId, dupFromId) {
       preview.classList.remove("hidden");
       removeBtn.classList.remove("hidden");
     } catch (err) {
-      toast(err.message, "error");
+      toast(err?.message || "That image cannot be used - try a different photo (JPG or PNG).", "error");
       e.target.value = "";
     }
   });
@@ -11886,6 +11940,12 @@ async function viewAdminEventForm(eventId, dupFromId) {
 
   document.getElementById("event-form").onsubmit = async (e) => {
     e.preventDefault();
+    // One save at a time (v0.140): a double-tap on Create must never make
+    // two events. The busy state clears on every early return via saveDone().
+    const saveBtn = e.target.querySelector('button[type="submit"]');
+    if (saveBtn?.disabled) return;
+    const saveDone = () => btnIdle(saveBtn);
+    btnBusy(saveBtn, ev ? "Saving…" : "Creating event…");
     const startVal = document.getElementById("f-start").value;
     const endVal = document.getElementById("f-end").value;
     const priceEur = parseFloat(document.getElementById("f-price").value || "0");
@@ -11896,6 +11956,7 @@ async function viewAdminEventForm(eventId, dupFromId) {
       if (externalUrl && !/^https?:\/\//i.test(externalUrl)) externalUrl = "https://" + externalUrl;
       if (!/^https?:\/\/[^\s]+\.[^\s]+/i.test(externalUrl)) {
         markError("f-ext-url", "External sign-up needs a valid link (https://…).");
+        saveDone();
         return;
       }
     } else {
@@ -11904,7 +11965,7 @@ async function viewAdminEventForm(eventId, dupFromId) {
     const data = {
       regMode,
       externalUrl: externalUrl || null,
-      title: document.getElementById("f-title").value.trim(),
+      title: document.getElementById("f-title").value.replace(/[\u200B-\u200D\u2060\uFEFF\u00AD]/g, "").trim().slice(0, 120),
       description: document.getElementById("f-desc").value.trim(),
       location: document.getElementById("f-location").value.trim(),
       venueId: document.getElementById("f-venue")?.value || null, // venue profile (v0.115) - feeds per-venue stats
@@ -11913,7 +11974,7 @@ async function viewAdminEventForm(eventId, dupFromId) {
       start: Timestamp.fromDate(new Date(startVal)),
       end: endVal ? Timestamp.fromDate(new Date(endVal)) : null,
       capacity: regMode === "app" && Number.isFinite(capVal) && capVal > 0 ? capVal : null,
-      price: Math.round((Number.isFinite(priceEur) ? priceEur : 0) * 100),
+      price: Math.max(0, Math.round((Number.isFinite(priceEur) ? priceEur : 0) * 100)),
       priceEsn: (() => {
         // "Free for ESNcard members" in the essentials wins; otherwise the
         // custom member price from Advanced settings (empty = no discount).
@@ -11976,9 +12037,13 @@ async function viewAdminEventForm(eventId, dupFromId) {
       published: document.getElementById("f-status").value === "published",
       updatedAt: serverTimestamp(),
     };
-    if (!data.title) { markError("f-title", "Give the event a title."); return; }
-    if (!startVal) { markError("f-start", "Set a start date and time."); return; }
-    if (endVal && new Date(endVal) < new Date(startVal)) { markError("f-end", "The end time is before the start time."); return; }
+    if (!data.title) { markError("f-title", "Give the event a title."); saveDone(); return; }
+    if (!startVal) { markError("f-start", "Set a start date and time."); saveDone(); return; }
+    if (endVal && new Date(endVal) < new Date(startVal)) { markError("f-end", "The end time is before the start time."); saveDone(); return; }
+    // Past events happen (backfilling attendance) but usually mean a typo.
+    if (!ev && new Date(startVal) < new Date(Date.now() - 3600e3)) {
+      if (!await appConfirm(`This event starts in the PAST (${fmtDate(new Date(startVal))}). Create it anyway?`)) { saveDone(); return; }
+    }
     // Every event carries ≥1 category tag AND ≥1 ESN cause (v0.107) -
     // office-hours sessions are exempt (they get the Office tag automatically).
     if (!data.officeHours) {
@@ -11986,6 +12051,7 @@ async function viewAdminEventForm(eventId, dupFromId) {
       if (!(data.tags || []).length) {
         toast("Pick at least one tag - it colours the event, counts as a passport visa and carries the ESN cause & DSA type.", "warn");
         document.getElementById("f-tags")?.scrollIntoView({ behavior: "smooth", block: "center" });
+        saveDone();
         return;
       }
     }
@@ -12057,6 +12123,7 @@ async function viewAdminEventForm(eventId, dupFromId) {
       navigate("/admin");
     } catch (err) {
       toast("Save failed: " + err.message, "error");
+      saveDone();
     }
   };
 
@@ -13791,6 +13858,11 @@ async function viewAdminShifts(eventId) {
         if (signups.some((s) => s.shiftId === sh.id && s.uid === assignWho)) {
           toast(`${(member.name || "They").split(" ")[0]} is already on this shift.`, "warn");
           return;
+        }
+        // Board slots are for board members (v0.140): assigning a volunteer
+        // there is usually a mis-click - ask before doing it anyway.
+        if (btn.dataset.role === "board" && !["board", "finance", "superadmin"].includes(member.role || "")) {
+          if (!await appConfirm(`${(member.name || "This person").split(" ")[0]} is a ${member.role || "volunteer"}, not board - put them on a BOARD spot anyway?`)) return;
         }
         btn.disabled = true;
         try {

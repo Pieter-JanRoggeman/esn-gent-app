@@ -2982,3 +2982,12 @@ html[data-theme="dark"] .dragon .puff { fill: #c3c5d8; }
   .dragon .gnt-float, .dragon .gnt-breathe, .dragon .puff { animation: none; }
   .dragon .puff { opacity: 0; }
 }
+
+/* ---------- Button busy spinner (v0.139) ---------- */
+.btn .btn-spin, .btn-spin {
+  display: inline-block; width: 1em; height: 1em; vertical-align: -2px;
+  border: 2px solid rgba(255, 255, 255, .35); border-top-color: #fff;
+  border-radius: 50%; animation: spin .7s linear infinite; margin-right: 2px;
+}
+.btn-ghost .btn-spin, .btn-ink .btn-spin { border-color: rgba(128, 128, 160, .3); border-top-color: currentColor; }
+.btn.is-busy { opacity: .85; cursor: progress; }
