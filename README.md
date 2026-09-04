@@ -2,7 +2,7 @@
 
 The event, ticketing & membership platform of **ESN Gent** — built for ~1,500 international students per year.
 
-**Live:** https://app.esngent.org · Current version: **v0.140-beta**
+**Live:** https://app.esngent.org · Current version: **v1.0.0**
 
 ## What it does
 
@@ -23,7 +23,7 @@ The event, ticketing & membership platform of **ESN Gent** — built for ~1,500 
 
 - **Frontend:** vanilla JS single-page app (`public/app.js`) — no build step, Firebase v10 CDN modules, clean URLs, service-worker PWA
 - **Backend:** Firebase — Hosting, Firestore, Cloud Functions (2nd gen, Node 22), Storage, Cloud Messaging, Auth (**Google sign-in only**)
-- **Payments:** Stripe Checkout + webhooks (currently **TEST mode**)
+- **Payments:** Stripe Checkout + webhooks (**LIVE** - cards + Bancontact; SEPA/bank-transfer stay off, the webhook treats checkout.session.completed as paid)
 - **Integrations:** Google Calendar API, UGent DSA API, Gemini, SMTP mail
 
 ## Repository layout

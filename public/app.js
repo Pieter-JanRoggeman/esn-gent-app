@@ -54,8 +54,17 @@ try {
 // Version & changelog. Bump APP_VERSION and add an entry on every
 // deploy - everyone sees the number, staff see the details.
 // ------------------------------------------------------------
-const APP_VERSION = "0.140-beta";
+const APP_VERSION = "1.0.0";
 const CHANGELOG = [
+  {
+    version: "1.0.0",
+    date: "2026-09-04",
+    notes: [
+      "Out of beta! 🎉 The app is live for real: payments run in Stripe live mode (cards + Bancontact), the beta chip and the built-in test-mode banner are gone, and the beta reset tool has been removed for good.",
+      "Fresh start: all test data from the beta rounds was wiped before launch - everything you see from here on is real.",
+      "Office details corrected everywhere: our office is the Home Canterbury common room, Stalhof 6, Ghent - hours as announced on the Office page.",
+    ],
+  },
   {
     version: "0.140-beta",
     date: "2026-09-03",
@@ -3539,8 +3548,8 @@ function brandIcon(name) {
 // DATA, not code: editable in Admin → Settings (settings/org), because they
 // change over semesters/boards. These are only the fallback defaults.
 const orgInfo = {
-  officeAddress: "Therminal, Hoveniersberg 24, Ghent",
-  officeHoursText: "Tuesday & Thursday, 19:00–21:00",
+  officeAddress: "Home Canterbury common room, Stalhof 6, Ghent",
+  officeHoursText: "announced on the Office page",
   contactEmail: "esn.gent@gmail.com",
 
   socialWebsite: "https://www.esngent.org",
@@ -8999,16 +9008,15 @@ async function viewAdminSettings() {
     <h3 class="settings-group">${mi("build", "sm")} System</h3>
 
     <div class="form-card" style="margin-bottom:16px">
-      <strong>${mi("campaign", "sm")} Site banner</strong> ${hintIcon("A strip shown at the top of every page for everyone - beta notices, warnings ('tonight's party moved!'), big announcements. A CHANGED message reappears even for people who dismissed the old one. While nothing is saved here, the built-in beta-test banner shows.")}
+      <strong>${mi("campaign", "sm")} Site banner</strong> ${hintIcon("A strip shown at the top of every page for everyone - warnings ('tonight's party moved!'), big announcements. A CHANGED message reappears even for people who dismissed the old one. While nothing is saved (or it's switched off), no banner shows.")}
       <div class="form-field" style="margin-top:10px">
-        <textarea id="bn-text" rows="2" maxlength="300" placeholder="e.g. Beta test - payments are in Stripe test mode: no real money…"></textarea>
+        <textarea id="bn-text" rows="2" maxlength="300" placeholder="e.g. Tonight's party moved to Vooruit - doors at 22:00!"></textarea>
       </div>
       <div class="form-actions" style="align-items:center;flex-wrap:wrap">
         <label class="checkbox-row" style="margin:0"><input type="checkbox" id="bn-enabled" /> Show the banner</label>
         <select id="bn-kind" class="inline-input"><option value="warn">Warning (orange)</option><option value="info">Info (blue)</option></select>
         <label class="checkbox-row" style="margin:0"><input type="checkbox" id="bn-dismiss" checked /> Dismissible ${hintIcon("Ticked: people can close it (it stays closed on their device until you change the text). Unticked: it stays until you turn it off here.")}</label>
         <button class="btn btn-sm btn-green" id="bn-save">Save banner</button>
-        <button class="btn btn-sm btn-ghost btn-ink" id="bn-beta">Use the beta-test text</button>
       </div>
       <p class="form-hint" style="margin-top:8px" id="bn-hint">Loading current banner…</p>
     </div>
@@ -9076,13 +9084,6 @@ async function viewAdminSettings() {
       <div class="form-actions" style="align-items:center;margin-top:10px">
         <input class="inline-input" id="vapid-key" placeholder="VAPID public key (starts with B…)" style="flex:1;min-width:220px" value="${esc(pushConfig.vapidKey || "")}" />
         <button class="btn btn-dark btn-sm" id="vapid-save">Save</button>
-      </div>
-    </div>
-
-    <div class="form-card" style="border-left:4px solid var(--esn-magenta)">
-      <strong>${mi("restart_alt", "sm")} Beta: reset test data</strong> ${hintIcon("Wipes ALL events, tickets, applications, meetings, reimbursements and refund requests. Keeps accounts, roles, prices, tags and shop products. Cannot be undone. This whole section disappears at launch.")}
-      <div class="form-actions" style="margin-top:10px">
-        <button class="btn btn-ghost btn-sm" id="beta-reset" style="color:var(--esn-magenta);border-color:var(--esn-magenta)">Reset all test data…</button>
       </div>
     </div>` : ""}
   `;
@@ -9511,15 +9512,10 @@ async function viewAdminSettings() {
         document.getElementById("bn-dismiss").checked = b.dismissible !== false;
         document.getElementById("bn-hint").textContent = b.enabled ? "Banner is LIVE for everyone." : "Banner is saved but switched off.";
       } else {
-        document.getElementById("bn-hint").textContent = "Nothing configured yet - the built-in beta-test banner is showing. Save here to take control of it.";
+        document.getElementById("bn-hint").textContent = "Nothing configured yet - no banner is shown.";
       }
     } catch { document.getElementById("bn-hint").textContent = ""; }
   })();
-  document.getElementById("bn-beta")?.addEventListener("click", () => {
-    document.getElementById("bn-text").value = "🧪 Beta test - payments are in Stripe test mode: no real money. Pay with test card 4242 4242 4242 4242, any future date & CVC. Please note down anything odd!";
-    document.getElementById("bn-enabled").checked = true;
-    document.getElementById("bn-kind").value = "warn";
-  });
   document.getElementById("bn-save")?.addEventListener("click", async (e) => {
     const text = document.getElementById("bn-text").value.trim();
     const enabled = document.getElementById("bn-enabled").checked;
@@ -9721,24 +9717,6 @@ async function viewAdminSettings() {
         toast("Push key saved - notifications can now be enabled.", "success");
       } catch (err) { toast("Save failed: " + err.message, "error"); }
       e.target.disabled = false;
-    };
-
-    // ---- Beta reset ----
-    document.getElementById("beta-reset").onclick = async (e) => {
-      const typed = await appPrompt('This wipes all test data (events, tickets, applications, meetings, …) and cannot be undone.\n\nType RESET to confirm:');
-      if (typed === null) return;
-      if (typed.trim() !== "RESET") { toast("Not confirmed - nothing was deleted.", "error"); return; }
-      e.target.disabled = true; e.target.textContent = "Wiping… (can take a minute)";
-      try {
-        const fn = httpsCallable(functions, "betaResetData");
-        const res = await fn({ confirm: "RESET" });
-        const total = Object.values(res.data?.counts || {}).reduce((s, n) => s + n, 0);
-        toast(`Blank slate ready: ${total} documents wiped, ${res.data?.usersReset || 0} profile card-statuses cleared.`, "success");
-        e.target.textContent = "Reset done ✓";
-      } catch (err) {
-        toast("Reset failed: " + err.message, "error");
-        e.target.disabled = false; e.target.textContent = "Reset all test data…";
-      }
     };
   }
 }
@@ -14595,11 +14573,10 @@ if ("Notification" in window && Notification.permission === "granted" && pushEna
   pushApiSupported().then((ok) => { if (ok) wireForegroundPush(); }).catch(() => {});
 }
 
-// Site banner (v0.131): configured by the board in Admin -> Settings ->
-// Site banner (settings/announcement). While no config exists, the
-// hardcoded beta strip in index.html keeps showing as before, so the
-// test-mode warning can't silently disappear. Dismissals are keyed on
-// the banner's last edit, so a CHANGED message reappears for everyone.
+// Site banner (v0.131, legacy fallback removed at v1.0.0): configured by
+// the board in Admin -> Settings -> Site banner (settings/announcement).
+// No config (or switched off) = no banner. Dismissals are keyed on the
+// banner's last edit, so a CHANGED message reappears for everyone.
 const betaBanner = document.getElementById("beta-banner");
 (async () => {
   if (!betaBanner) return;
@@ -14621,8 +14598,8 @@ const betaBanner = document.getElementById("beta-banner");
       try { localStorage.setItem(dismissKey, "1"); } catch { /* ok */ }
     };
   };
-  if (!cfg) { show("beta-banner-dismissed", true); return; }   // legacy default
-  if (cfg.enabled !== true || !cfg.text) return;               // configured OFF
+  if (!cfg) return;                              // nothing configured - no banner
+  if (cfg.enabled !== true || !cfg.text) return; // configured OFF
   betaBanner.querySelector("span").textContent = cfg.text;
   betaBanner.classList.remove("beta-banner-warn", "beta-banner-info");
   betaBanner.classList.add(cfg.kind === "info" ? "beta-banner-info" : "beta-banner-warn");
