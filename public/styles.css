@@ -2991,3 +2991,100 @@ html[data-theme="dark"] .dragon .puff { fill: #c3c5d8; }
 }
 .btn-ghost .btn-spin, .btn-ink .btn-spin { border-color: rgba(128, 128, 160, .3); border-top-color: currentColor; }
 .btn.is-busy { opacity: .85; cursor: progress; }
+
+/* ---- ESNcard application: attachment + optional block (v1.1.0) ---- */
+.attach-box { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 12px; border: 1px dashed var(--border); border-radius: 10px; background: var(--surface2); }
+.attach-name { font-size: .88rem; color: var(--ink); overflow-wrap: anywhere; }
+.form-optional summary { list-style: none; display: inline-flex; align-items: center; gap: 6px; }
+.form-optional summary::before { content: "▸"; font-size: .8em; transition: transform .15s ease; }
+.form-optional[open] summary::before { transform: rotate(90deg); }
+.form-optional summary::-webkit-details-marker { display: none; }
+.chip-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.form-field .chip-check, .chip-check { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--card); font-size: .85rem; text-transform: none; letter-spacing: 0; color: var(--ink); cursor: pointer; }
+.chip-check:has(input:checked) { border-color: var(--esn-dark); background: color-mix(in srgb, var(--esn-dark) 10%, var(--card)); }
+.chip-check input { width: 15px; height: 15px; accent-color: var(--esn-dark); margin: 0; }
+
+/* ---- Admin: application review (v1.1.0) ---- */
+.assign-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.app-full { margin: 0; }
+.app-detail-row td { padding-top: 0 !important; border-top: 0 !important; }
+.sub-grid { max-width: 720px; }
+.app-full summary { list-style: none; display: inline-flex; align-items: center; gap: 4px; }
+.app-full summary::-webkit-details-marker { display: none; }
+.sub-grid { display: grid; grid-template-columns: max-content 1fr; gap: 3px 12px; margin-top: 8px; padding: 10px 12px; border-radius: 10px; background: var(--surface2); font-size: .85rem; max-width: 520px; }
+.sub-grid .sub-row { display: contents; }
+.sub-grid .sub-k { color: var(--muted); white-space: nowrap; }
+.sub-grid .sub-v { color: var(--ink); overflow-wrap: anywhere; }
+@media (max-width: 640px) {
+  .sub-grid { grid-template-columns: 1fr; max-width: none; }
+  .sub-grid .sub-k { margin-top: 6px; }
+}
+@media (max-width: 640px) {
+  /* The full-submission row docks under its applicant card */
+  .cards tr.app-detail-row { margin-top: -6px; border-top-left-radius: 0; border-top-right-radius: 0; padding-top: 8px; }
+  .cards tr.app-detail-row td { display: block; text-align: left; padding: 0; }
+  .cards tr:has(+ .app-detail-row) { margin-bottom: 0; border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+}
+
+/* ---- ESNcard form v1.2.0: stay period, "Other" free text ---- */
+.month-row { display: grid; grid-template-columns: 1fr 96px; gap: 8px; }
+.other-input { margin-top: 8px; }
+.checkbox-row span { font-size: .88rem; color: var(--ink); }
+
+/* ---- Admin overview donuts (v1.2.0) ---- */
+.apps-overview summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.apps-overview summary::-webkit-details-marker { display: none; }
+.donut-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; margin-top: 14px; }
+.donut { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--surface2); min-width: 0; }
+.donut h4 { margin: 0 0 8px; font-size: .82rem; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); }
+.donut-body { display: flex; align-items: center; gap: 14px; }
+.donut svg { width: 112px; height: 112px; flex: none; }
+.donut svg circle { transition: opacity .12s ease; }
+.donut svg:hover circle:not(:hover):not(:first-child) { opacity: .45; }
+.donut-num { font-size: 20px; font-weight: 700; fill: var(--ink); }
+.donut-cap { font-size: 8px; fill: var(--muted); text-transform: uppercase; letter-spacing: .8px; }
+.donut-legend { list-style: none; margin: 0; padding: 0; flex: 1; min-width: 0; font-size: .82rem; }
+.donut-legend li { display: grid; grid-template-columns: 10px 1fr auto auto; gap: 8px; align-items: start; padding: 3px 0; }
+.donut-legend .sw { width: 10px; height: 10px; border-radius: 3px; margin-top: 3px; }
+.donut-legend .lb { color: var(--ink); overflow-wrap: anywhere; line-height: 1.25; }
+.donut-legend .ct { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+.donut-legend .pc { color: var(--muted); font-variant-numeric: tabular-nums; min-width: 34px; text-align: right; }
+
+/* ---- Users tab (v1.3.0): dropdown filters, institution chips, team rows ---- */
+.filter-selects { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: flex-end; margin: -4px 0 12px; }
+.fsel { display: flex; flex-direction: column; gap: 3px; font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); }
+.fsel select { font: inherit; font-weight: 500; text-transform: none; letter-spacing: 0; font-size: .86rem; color: var(--ink); padding: 6px 28px 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); max-width: 240px; }
+.inst-chip { display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: .78rem; font-weight: 600; line-height: 1.3; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
+tr.row-team > td:first-child { box-shadow: inset 3px 0 0 var(--esn-dark); }
+@media (max-width: 640px) {
+  .fsel { flex: 1 1 45%; }
+  .fsel select { max-width: none; width: 100%; }
+  .cards tr.row-team { border-left: 3px solid var(--esn-dark); }
+  .cards tr.row-team > td:first-child { box-shadow: none; }
+}
+
+/* ---- Colour language (v1.4.0): green = yes, red = no / destructive ---- */
+:root { --danger: #D7263D; --danger-soft: rgba(215, 38, 61, 0.10); }
+html[data-theme="dark"] { --danger: #FF5C6E; --danger-soft: rgba(255, 92, 110, 0.16); }
+.btn.btn-danger { color: var(--danger) !important; border-color: var(--danger) !important; background: transparent; }
+.btn.btn-danger:hover:not(:disabled) { background: var(--danger-soft); }
+.btn.btn-danger-solid { background: var(--danger); color: #fff; border-color: var(--danger); }
+.btn.btn-danger-solid:hover:not(:disabled) { filter: brightness(0.92); }
+.btn-link { background: none; border: 0; padding: 2px 0; margin-top: 4px; font: inherit; font-size: .8rem; color: var(--esn-dark); cursor: pointer; display: inline-flex; align-items: center; gap: 2px; }
+.btn-link:hover { text-decoration: underline; }
+html[data-theme="dark"] .btn-link { color: var(--esn-cyan); }
+
+/* ---- ESNcard work queue (v1.4.0): dense rows, sticky filters, desk flow ---- */
+.queue-sticky { position: sticky; top: var(--hdr, 0px); z-index: 5; background: var(--bg); padding: 8px 0 6px; margin: 0 0 6px; }
+.table-wrap.queue td { padding: 8px 10px; vertical-align: middle; }
+.table-wrap.queue .badge { white-space: nowrap; }
+.table-wrap.queue td.queue-actions { min-width: 380px; }
+.td-stack { min-width: 0; }
+.table-wrap.queue .assign-row .inline-input { height: 34px; }
+.table-wrap.queue tr[hidden] { display: none; }
+@media (max-width: 640px) {
+  .table-wrap.queue td.queue-actions { min-width: 0; }
+  .queue-sticky { position: static; }
+  .cards td .td-stack { text-align: right; overflow-wrap: anywhere; white-space: normal; }
+  .cards td[data-l="Applied"] { white-space: normal !important; }
+}

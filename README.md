@@ -2,7 +2,7 @@
 
 The event, ticketing & membership platform of **ESN Gent** — built for ~1,500 international students per year.
 
-**Live:** https://app.esngent.org · Current version: **v1.0.0**
+**Live:** https://app.esngent.org · Current version: **v1.4.0**
 
 ## What it does
 

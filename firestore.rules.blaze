@@ -267,18 +267,42 @@ service cloud.firestore {
         && request.resource.data.status == 'applied'
         && request.resource.data.uid == request.auth.uid
         && request.resource.data.privacyAccepted == true;
+      // Orphaned (v1.0.1): the board removed the card from the profile while
+      // the application still says 'active' - the student may apply again.
+      allow update: if isSignedIn() && request.auth.uid == uid
+        && resource.data.status == 'active'
+        && get(/databases/$(database)/documents/users/$(uid)).data.get('esncardCode', '') == ''
+        && request.resource.data.status == 'applied'
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.privacyAccepted == true;
       // GDPR: withdraw an unpaid/declined application; board can always clean up
       allow delete: if isBoard()
         || (isSignedIn() && request.auth.uid == uid && resource.data.status in ['applied', 'rejected']);
+      // Submission snapshots (v1.3.0): one doc per submit of the form, so
+      // the board can see previous submissions after edits and renewals.
+      // Owner appends, board reads, nobody edits; owner/board may delete
+      // (account deletion sweeps them server-side).
+      match /history/{snapId} {
+        allow read: if isBoard() || (isSignedIn() && request.auth.uid == uid);
+        allow create: if isSignedIn() && request.auth.uid == uid
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.status == 'applied';
+        allow update: if false;
+        allow delete: if isBoard() || (isSignedIn() && request.auth.uid == uid);
+      }
     }
 
-    // Proof-of-exchange photos, stored apart from the application so the
-    // board's list views don't download every photo. Owner writes their
+    // Proof-of-exchange files, stored apart from the application so the
+    // board's list views don't download every proof. Owner writes their
     // own; board can view; owner or board can delete (GDPR).
+    // Shape: inline image {image, updatedAt} OR a Storage file pointer
+    // {file, contentType, name?, size?, updatedAt} (PDF since v0.105 -
+    // the rule missed the file keys until v1.0.1, which blocked every
+    // PDF submission with "insufficient permissions").
     match /applicationProofs/{uid} {
       allow read: if isBoard() || (isSignedIn() && request.auth.uid == uid);
       allow create, update: if isSignedIn() && request.auth.uid == uid
-        && request.resource.data.keys().hasOnly(['image', 'updatedAt']);
+        && request.resource.data.keys().hasOnly(['image', 'file', 'contentType', 'name', 'size', 'updatedAt']);
       allow delete: if isBoard() || (isSignedIn() && request.auth.uid == uid);
     }
 
@@ -341,10 +365,14 @@ service cloud.firestore {
     match /errorLog/{entryId} {
       allow read, delete: if isFinance();
       allow create: if isSignedIn()
-        && request.resource.data.keys().hasOnly(['ts', 'where', 'message', 'hash', 'uid', 'ua', 'version'])
+        && request.resource.data.keys().hasOnly(['ts', 'where', 'message', 'hash', 'uid', 'ua', 'version', 'code', 'detail', 'email'])
         && request.resource.data.message is string
         && request.resource.data.message.size() <= 600
-        && request.resource.data.uid == request.auth.uid;
+        && request.resource.data.get('detail', '').size() <= 700
+        && request.resource.data.get('code', '').size() <= 80
+        && request.resource.data.uid == request.auth.uid
+        // v1.1.0: the reporter's own e-mail only (so the board can follow up)
+        && request.resource.data.get('email', '') in ['', request.auth.token.get('email', '')];
       allow update: if false;
     }
 

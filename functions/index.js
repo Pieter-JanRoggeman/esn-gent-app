@@ -10,7 +10,33 @@
 //   SMTP_PASSWORD (the app@esngent.org mailbox password)
 // ============================================================
 
-const { onCall, onRequest, HttpsError } = require("firebase-functions/v2/https");
+const { onCall: onCallRaw, onRequest, HttpsError } = require("firebase-functions/v2/https");
+
+// v1.1.0: every callable is guarded. An HttpsError passes through untouched
+// (those carry a message written for the student); ANY other exception -
+// a Stripe error, a bug, a missing document - is logged to errorLog as
+// "fn:<name>" WITH its real message + who triggered it, and the client
+// gets a readable "something went wrong on our side" instead of the bare
+// word "internal". Names are resolved at the end of this file.
+const _callables = [];
+function onCall(optsOrHandler, maybeHandler) {
+  const opts = typeof optsOrHandler === "function" ? null : optsOrHandler;
+  const handler = typeof optsOrHandler === "function" ? optsOrHandler : maybeHandler;
+  const meta = { name: "callable" };
+  const guarded = async (request) => {
+    try {
+      return await handler(request);
+    } catch (err) {
+      if (err instanceof HttpsError) throw err;
+      await logServerError(meta.name, err, request);
+      throw new HttpsError("internal",
+        "Something went wrong on our side - it's been logged. Please try again in a minute, or message the board if it keeps happening.");
+    }
+  };
+  const fn = opts ? onCallRaw(opts, guarded) : onCallRaw(guarded);
+  _callables.push({ fn, meta });
+  return fn;
+}
 const { onDocumentWritten, onDocumentCreated } = require("firebase-functions/v2/firestore");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { defineSecret } = require("firebase-functions/params");
@@ -41,15 +67,23 @@ const MAX_QTY = 10;
 
 // v0.85: server-side errors also land in the in-app error log
 // (Settings → Error log), next to Cloud Logging.
-async function logServerError(where, err) {
+async function logServerError(where, err, request) {
   console.error(where, err);
   try {
-    await db.collection("errorLog").add({
+    const entry = {
       ts: FieldValue.serverTimestamp(),
       where: `fn:${where}`,
       message: String(err?.message || err).slice(0, 500),
       version: "server",
-    });
+    };
+    // v1.1.0: who triggered it + the error type, so the board can follow
+    // up with the person instead of guessing from a timestamp.
+    const code = err?.code || err?.type || err?.name;
+    if (code && code !== "Error") entry.code = String(code).slice(0, 60);
+    if (request?.auth?.uid) entry.uid = request.auth.uid;
+    if (request?.auth?.token?.email) entry.email = String(request.auth.token.email).slice(0, 120);
+    if (err?.stack) entry.detail = String(err.stack).split("\n").slice(0, 4).join(" | ").slice(0, 600);
+    await db.collection("errorLog").add(entry);
   } catch { /* logging must never break the caller */ }
 }
 
@@ -2932,6 +2966,13 @@ exports.deleteMyAccount = onCall(async (request) => {
   });
   await step("esncardApplication", async () => {
     const ref = db.collection("esncardApplications").doc(uid);
+    // Submission snapshots (v1.3.0) carry the full form - always gone.
+    const hist = await ref.collection("history").get();
+    if (!hist.empty) {
+      const batch = db.batch();
+      hist.docs.forEach((d) => batch.delete(d.ref));
+      await batch.commit();
+    }
     const snap = await ref.get();
     if (!snap.exists) return;
     const a = snap.data();
@@ -3277,3 +3318,10 @@ exports.assignEsncard = onCall({ secrets: [esncardBypass] }, async (request) => 
   await appendCardHistory(uid, { action: "assigned", code, by: request.auth.uid, section: r.section || null });
   return result;
 });
+
+// Resolve the export names for the callable guard (see onCall above), so
+// error-log entries read "fn:createEsncardCheckout" rather than "fn:callable".
+for (const [name, value] of Object.entries(exports)) {
+  const c = _callables.find((x) => x.fn === value);
+  if (c) c.meta.name = name;
+}

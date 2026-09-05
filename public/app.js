@@ -54,8 +54,49 @@ try {
 // Version & changelog. Bump APP_VERSION and add an entry on every
 // deploy - everyone sees the number, staff see the details.
 // ------------------------------------------------------------
-const APP_VERSION = "1.0.0";
+const APP_VERSION = "1.4.0";
 const CHANGELOG = [
+  {
+    version: "1.4.0",
+    date: "2026-09-05",
+    notes: [
+      "Board: the ESNcard queue is built for speed. It opens on To assign (everyone who paid, oldest payment first), unpaid applications live under Office, Details under a name unfolds the submission instead of taking a row, Enter in the card field assigns and jumps to the next student, filters stay pinned while you scroll.",
+      "Board: money first at the desk - an unpaid application shows a Paid? button; only after you confirm does the card-number field appear. Handing over the card is one green click.",
+      "Colour language everywhere: green means yes, red means no - reject, remove, delete and cancel buttons are red, including in confirmation dialogs.",
+      "Cash at the office is now a superadmin switch under Settings → ESNcard, OFF by default: students pay online right after submitting; the board can still register cash it did receive.",
+      "Fixed: the user page crashed with 'subs is not defined' when opened from the queue.",
+    ],
+  },
+  {
+    version: "1.3.0",
+    date: "2026-09-05",
+    notes: [
+      "Board: the ESNcards tab is now Users, with two sub-tabs. ESNcard is the office-hours work queue - it opens on everything that still needs a hand (unpaid, to assign, to pick up), shows the time of each submission and filters by institution, nationality, type of stay, payment, proof and arrival month. Users lists every account with colour-coded institutions, team and alumni flags, and filters by institution, nationality and role.",
+      "Board: numbers and the donut overview moved to Insights → Members & map. The 'card ready' e-mail text is edited under Settings → ESNcard (superadmin).",
+      "Board: a user's page now shows their previous ESNcard submissions - every submit of the form is kept, so edits and renewals stay visible.",
+    ],
+  },
+  {
+    version: "1.2.0",
+    date: "2026-09-05",
+    notes: [
+      "ESNcard form: tell us from which month to which month you're in Ghent (leave the end open if you don't know yet), pick your home country and city from a list, and whenever you choose 'Other' you can say what it is. The passport/ID number question is gone.",
+      "Whatever your profile already knows is filled in for you, and what you add here is saved to your profile - no double typing.",
+      "Proof of exchange: it says clearly which files work (JPG, PNG or PDF, max 5 MB).",
+      "Board: an Overview with donut charts on the ESNcards tab - status, institutions, type of stay, nationalities, arrival and departure months, how people found ESN, home countries.",
+    ],
+  },
+  {
+    version: "1.1.0",
+    date: "2026-09-05",
+    notes: [
+      "ESNcard application fixed: attaching a PDF as proof of exchange failed with a permissions error since day one - it works now (a rules fix went live first as 1.0.1). Sorry to everyone who hit it.",
+      "The application form is shorter: three steps, the rarely-needed questions folded under 'Optional', and the proof is a real attachment (photo, screenshot or PDF up to 5 MB) with a clear file name and a Remove button.",
+      "Errors now speak human: instead of 'Missing or insufficient permissions' or 'internal' you get what happened and what to do - and the board's error log keeps the technical text, the error code and who hit it.",
+      "Board: the ESNcard review is down to two buttons - Assign card (checks the number on esncard.org, marks a cash application paid, links the card, mails the student) and Reject… (with a reason; online payments refund automatically). Every application now has a 'Full submission' view with all answers.",
+      "Board: the error log gets a Download CSV button (all entries, opens in Excel/Sheets), shows who hit each error, and server-side failures are logged with their real cause.",
+    ],
+  },
   {
     version: "1.0.0",
     date: "2026-09-04",
@@ -904,7 +945,7 @@ function locationPickerHtml(prefix, lat, lng) {
     <div class="form-actions" style="margin:6px 0 0;align-items:center">
       <button type="button" class="btn btn-sm btn-ghost btn-ink" id="${prefix}-geo">${mi("location_on", "sm")} Pin on map</button>
       <span class="form-hint" id="${prefix}-geo-status">${pinned ? `Pinned ✓` : "Optional - type the place, hit Enter or this button, pick the match."}</span>
-      <button type="button" class="btn btn-sm btn-ghost ${pinned ? "" : "hidden"}" id="${prefix}-geo-clear" style="color:var(--esn-magenta)">✕ remove pin</button>
+      <button type="button" class="btn btn-sm btn-ghost ${pinned ?  btn-danger"" : "hidden"}" id="${prefix}-geo-clear">✕ remove pin</button>
     </div>
     <div id="${prefix}-geo-results"></div>`;
 }
@@ -1255,7 +1296,11 @@ function memberEligible(ev = null) {
 // proofRequired: welcome-week switch (v0.105) - when false, the apply form
 // hides the proof-of-exchange upload entirely and applications go through
 // without one. Toggled in Admin → Settings → ESNcard.
-let cardPricing = { student: 1500, volunteer: 750, validityMonths: 12, proofRequired: true, acceptAvailable: false };
+let cardPricing = { student: 1500, volunteer: 750, validityMonths: 12, proofRequired: true, acceptAvailable: false, cashEnabled: false };
+// Cash at the office is OFF by default since v1.4.0 - students pay online;
+// the superadmin can switch it on under Settings → ESNcard (busy weeks, card
+// terminal down, …). The board can always register cash it did receive.
+function cashAllowed() { return cardPricing.cashEnabled === true; }
 // Org-wide event defaults (settings/events) - standard cancellation deadline
 // & refund fee. Per-event values always win; these fill the gaps.
 let eventDefaults = { defaultCancelHours: 24, defaultRefundFee: 100, waitlistHours: 12 };
@@ -1336,7 +1381,7 @@ function pickIconDialog(current) {
           <button type="button" class="icon-opt icon-auto ${!current ? "sel" : ""}" data-ic="">Auto</button>
           ${iconGridHtml(current)}
         </div>
-        <div class="dialog-actions"><button class="btn btn-ghost btn-ink" id="icon-dlg-cancel">Cancel</button></div>
+        <div class="dialog-actions"><button class="btn btn-ghost btn-danger" id="icon-dlg-cancel">Cancel</button></div>
       </div>`;
     document.body.appendChild(ov);
     document.body.classList.add("dialog-open");
@@ -1492,7 +1537,7 @@ async function renderCashCard(box, ev) {
           </div>
           <div class="form-actions">
             <button class="btn btn-green btn-sm" id="cash-save">Save ${editing.phase} count</button>
-            <button class="btn btn-ghost btn-sm btn-ink" id="cash-cancel">Cancel</button>
+            <button class="btn btn-ghost btn-sm btn-danger" id="cash-cancel">Cancel</button>
           </div>
         </div>`;
 
@@ -1618,8 +1663,8 @@ async function viewCodex() {
         </div>
         <div class="form-actions">
           <button class="btn btn-green btn-sm cx-save">Save song</button>
-          <button class="btn btn-ghost btn-sm btn-ink cx-cancel">Cancel</button>
-          ${s.id ? `<button class="btn btn-ghost btn-sm cx-delete" style="color:var(--esn-magenta);margin-left:auto">Delete song</button>` : ""}
+          <button class="btn btn-ghost btn-sm cx-cancel btn-danger">Cancel</button>
+          ${s.id ? `<button class="btn btn-ghost btn-sm cx-delete btn-danger" style="color:var(--esn-magenta);margin-left:auto">Delete song</button>` : ""}
         </div>
       </div>`;
 
@@ -1832,7 +1877,7 @@ async function viewNews() {
           ${n.url ? `<a class="btn btn-sm btn-cyan" href="${esc(n.url)}" target="_blank" rel="noopener">Read more ${mi("arrow_outward", "sm")}</a>` : ""}
           ${isAdmin ? `
           <button class="btn btn-sm btn-ghost btn-ink news-edit" data-id="${n.id}">${mi("edit", "sm")} Edit</button>
-          <button class="btn btn-sm btn-ghost news-del" data-id="${n.id}" style="color:var(--esn-magenta)">Delete</button>` : ""}
+          <button class="btn btn-sm btn-ghost news-del btn-danger" data-id="${n.id}">Delete</button>` : ""}
         </div>
       </article>`).join("") : `<div class="empty-state"><div class="big">${mi("campaign")}</div><p>No news yet - announcements from the board will appear here.</p></div>`}
     `;
@@ -1854,7 +1899,7 @@ async function viewNews() {
           </div>
           <div class="form-actions">
             <button class="btn btn-green btn-sm" id="nw-save">${existing ? "Save changes" : `${mi("campaign", "sm")} Publish (sends push)`}</button>
-            <button class="btn btn-ghost btn-sm btn-ink" id="nw-cancel">Cancel</button>
+            <button class="btn btn-ghost btn-sm btn-danger" id="nw-cancel">Cancel</button>
           </div>
         </div>`;
       document.getElementById("nw-cancel").onclick = () => { box.innerHTML = ""; };
@@ -2393,7 +2438,7 @@ async function viewFriends() {
           <td class="card-main"><strong>${esc(nameOf(f.a, f.aName))}</strong> ↔ <strong>${esc(nameOf(f.b, f.bName))}</strong></td>
           <td data-l="Kind"><button class="btn btn-sm btn-ghost btn-ink fr-toggle" data-fid="${esc(f.id)}" title="Click to switch between good and best">${f.type === "best" ? "Best friends --" : "Good friends ···"}</button></td>
           <td data-l="Added by">${esc(f.createdByName || "-")}</td>
-          <td class="card-actions"><button class="btn btn-sm btn-ghost fr-del" data-fid="${esc(f.id)}" style="color:var(--esn-magenta)" title="Remove friendship">✕</button></td>
+          <td class="card-actions"><button class="btn btn-sm btn-ghost fr-del btn-danger" data-fid="${esc(f.id)}" title="Remove friendship">✕</button></td>
         </tr>`).join("")}
       </tbody>
     </table></div>` : ""}
@@ -3357,7 +3402,7 @@ async function viewDeals() {
           </div>
           <div class="form-actions">
             <button class="btn btn-green btn-sm" id="pt-save">${existing ? "Save changes" : "Add partner"}</button>
-            <button class="btn btn-ghost btn-sm btn-ink" id="pt-cancel">Cancel</button>
+            <button class="btn btn-ghost btn-sm btn-danger" id="pt-cancel">Cancel</button>
           </div>
         </div>`;
       document.getElementById("pt-cancel").onclick = () => { box.innerHTML = ""; };
@@ -3501,6 +3546,7 @@ let faqCustom = null;
       if (Number.isFinite(d.validityMonths) && d.validityMonths >= 1) cardPricing.validityMonths = d.validityMonths;
       if (typeof d.proofRequired === "boolean") cardPricing.proofRequired = d.proofRequired;
       if (typeof d.acceptAvailable === "boolean") cardPricing.acceptAvailable = d.acceptAvailable;
+      if (typeof d.cashEnabled === "boolean") cardPricing.cashEnabled = d.cashEnabled;
     }
   } catch { /* defaults are fine */ }
 })();
@@ -3645,7 +3691,7 @@ async function enablePush() {
   try {
     const perm = await Notification.requestPermission();
     if (perm !== "granted") {
-      toast("Notifications stay off - you can change your mind anytime under Account → Notifications.", "error");
+      toast("Notifications stay off - you can change your mind anytime under Account → Notifications.", "warn");
       return false;
     }
     messagingInst = messagingInst || getMessaging(app);
@@ -3794,6 +3840,7 @@ window.addEventListener("scroll", () => document.getElementById("hint-pop")?.rem
 //   await appPrompt("…", { value, placeholder, multiline, type }) → string|null
 // ------------------------------------------------------------
 function appDialog({ message = "", input = null, okLabel = "OK", cancelLabel = "Cancel", danger = false }) {
+  // Colour language (v1.4.0): green = yes, red = no/destructive.
   return new Promise((resolve) => {
     document.getElementById("app-dialog")?.remove();
     const ov = document.createElement("div");
@@ -3809,8 +3856,8 @@ function appDialog({ message = "", input = null, okLabel = "OK", cancelLabel = "
               : `<input id="dlg-input" type="${input.type || "text"}" ${input.type === "number" ? `min="0" step="0.01"` : ""} maxlength="${input.maxlength || 200}" placeholder="${esc(input.placeholder || "")}" value="${esc(input.value || "")}" />`}
           </div>` : ""}
         <div class="dialog-actions">
-          ${cancelLabel === null ? "" : `<button class="btn btn-ghost btn-ink" id="dlg-cancel">${esc(cancelLabel)}</button>`}
-          <button class="btn ${danger ? "btn-magenta" : "btn-cyan"}" id="dlg-ok">${esc(okLabel)}</button>
+          ${cancelLabel === null ? "" : `<button class="btn btn-ghost ${danger ? "btn-ink" : "btn-danger"}" id="dlg-cancel">${esc(cancelLabel)}</button>`}
+          <button class="btn ${danger ? "btn-danger-solid" : "btn-green"}" id="dlg-ok">${esc(okLabel)}</button>
         </div>
       </div>`;
     document.body.appendChild(ov);
@@ -3857,7 +3904,8 @@ function appPrompt(message, opts = {}) {
     message,
     input: { multiline: !!opts.multiline, type: opts.type, value: opts.value, placeholder: opts.placeholder, maxlength: opts.maxlength, rows: opts.rows },
     okLabel: opts.okLabel ?? "Save",
-    cancelLabel: "Cancel",
+    cancelLabel: opts.cancelLabel ?? "Cancel",
+    danger: opts.danger === true,
   });
 }
 
@@ -3913,17 +3961,68 @@ function fmtMoney(cents, currency = "eur") {
     style: "currency", currency: currency.toUpperCase(),
   }).format((cents || 0) / 100);
 }
+// Readable errors (v1.1.0). Firebase's own wording ("Missing or insufficient
+// permissions.", "internal", "client is offline") means nothing to a
+// student. Every error toast passes through here: the raw fragment is
+// swapped for plain advice, while the LOG keeps the raw text + a code so
+// the board still sees exactly what happened.
+const ERROR_HINTS = [
+  [/Missing or insufficient permissions\.?/i, "permission-denied",
+    "the app wasn't allowed to save this. Sign out and back in, then try again - if it keeps happening, message the board (it's logged on our side)."],
+  [/Failed to get document because the client is offline\.?|\bclient is offline\b|Failed to fetch|NetworkError|network-request-failed/i, "offline",
+    "no connection - check your internet and try again."],
+  [/storage\/unauthorized/i, "storage-unauthorized", "that file couldn't be uploaded - only images and PDFs up to 5 MB are allowed."],
+  [/storage\/(canceled|retry-limit-exceeded|unknown)/i, "storage-failed", "the upload didn't finish - check your connection and try again."],
+  [/auth\/popup-blocked/i, "popup-blocked", "your browser blocked the sign-in window - allow pop-ups for app.esngent.org, or try again."],
+  [/auth\/(popup-closed-by-user|cancelled-popup-request)/i, "signin-cancelled", "sign-in was cancelled."],
+  [/auth\/(user-token-expired|invalid-user-token|requires-recent-login)/i, "session-expired", "your session expired - please sign in again and retry."],
+];
+// Bare callable codes: Firebase uses the code itself as the message when a
+// function fails without one ("internal", "unavailable", …). Only matched
+// when the code IS the message (or sits alone at the end in brackets).
+const CODE_HINTS = {
+  "internal": "something went wrong on our side - it's been logged, please try again in a minute.",
+  "unavailable": "the server didn't respond - check your connection and try again in a moment.",
+  "deadline-exceeded": "that took too long and was cancelled - please try again.",
+  "unauthenticated": "your session expired - please sign in again and retry.",
+  "resource-exhausted": "the app is very busy right now - please try again in a minute.",
+  "permission-denied": "you don't have permission for this. Sign out and back in, then try again.",
+};
+const CODE_RE = new RegExp(`(^|\\(|: )(${Object.keys(CODE_HINTS).join("|")})\\)?\\.?$`, "i");
+function humanizeError(msg) {
+  const raw = String(msg || "");
+  const finish = (text, code) => {
+    const t = text.replace(/\s+/g, " ").trim();
+    return { text: t.charAt(0).toUpperCase() + t.slice(1), code, raw };
+  };
+  for (const [re, code, text] of ERROR_HINTS) {
+    if (re.test(raw)) return finish(raw.replace(re, text), code); // keeps the caller's context ("Could not submit: …")
+  }
+  const m = raw.match(CODE_RE);
+  if (m) {
+    const code = m[2].toLowerCase();
+    const closing = m[0].includes(")") ? ")" : "";
+    return finish(raw.replace(CODE_RE, (m[1] || "") + CODE_HINTS[code] + closing), code);
+  }
+  return { text: raw, code: "", raw };
+}
+// Validation nudges ("Please fill in…") are not errors - keep them out of the log.
+const VALIDATION_RE = /^(please |fill in |enter |choose |select |pick |write |type |add |that doesn't look|not confirmed|nothing to|already |you can't|you cannot)/i;
 function toast(msg, type = "") {
   const t = document.getElementById("toast");
   const icon = type === "error" ? "error" : type === "warn" ? "warning" : type === "success" ? "check_circle" : "info";
-  t.innerHTML = `${mi(icon, "sm")}<span>${esc(msg)}</span>`;
+  let shown = msg;
+  let h = null;
+  if (type === "error") { h = humanizeError(msg); shown = h.text; }
+  t.innerHTML = `${mi(icon, "sm")}<span>${esc(shown)}</span>`;
   t.className = `toast ${type}`;
   // restart the entrance animation even when a toast is already showing
   void t.offsetWidth;
   clearTimeout(t._timer);
-  t._timer = setTimeout(() => t.classList.add("hidden"), 4500);
-  // Every error a user actually sees also lands in the error log (v0.85).
-  if (type === "error") logError("app", msg);
+  t._timer = setTimeout(() => t.classList.add("hidden"), h && h.code ? 7000 : 4500);
+  // Every REAL error a user sees also lands in the error log (v0.85) - with
+  // the raw Firebase text and a code, never the friendly rewrite.
+  if (type === "error" && !VALIDATION_RE.test(String(msg))) logError("app", h.raw, { code: h.code });
 }
 function errorState(msg) {
   logError("page", msg);
@@ -3941,7 +4040,7 @@ function errorState(msg) {
 // ------------------------------------------------------------
 const _errSeen = new Set();
 let _errBudget = 15; // max writes per session
-function logError(where, message) {
+function logError(where, message, extra = {}) {
   try {
     const msg = String(message || "").slice(0, 500);
     if (!msg || _errBudget <= 0) return;
@@ -3952,7 +4051,7 @@ function logError(where, message) {
     _errSeen.add(key);
     _errBudget--;
     if (!currentUser) return; // rules require sign-in; anonymous errors stay local
-    addDoc(collection(db, "errorLog"), {
+    const entry = {
       ts: serverTimestamp(),
       where,
       message: msg,
@@ -3960,14 +4059,21 @@ function logError(where, message) {
       uid: currentUser.uid,
       ua: navigator.userAgent.slice(0, 120),
       version: APP_VERSION,
-    }).catch(() => {}); // logging must never cause errors itself
+    };
+    // v1.1.0: who + what kind, so the board can follow up with the person.
+    if (currentUser.email) entry.email = String(currentUser.email).slice(0, 120);
+    if (extra.code) entry.code = String(extra.code).slice(0, 60);
+    if (extra.detail) entry.detail = String(extra.detail).slice(0, 600);
+    addDoc(collection(db, "errorLog"), entry).catch(() => {}); // logging must never cause errors itself
   } catch { /* never throw from the logger */ }
 }
 window.addEventListener("error", (e) => {
-  logError("crash", `${e.message || "script error"} @ ${(e.filename || "").split("/").pop()}:${e.lineno || "?"}`);
+  logError("crash", `${e.message || "script error"} @ ${(e.filename || "").split("/").pop()}:${e.lineno || "?"}`,
+    { detail: e.error?.stack ? String(e.error.stack).split("\n").slice(0, 4).join(" | ") : "" });
 });
 window.addEventListener("unhandledrejection", (e) => {
-  logError("promise", e.reason?.message || String(e.reason || "unhandled rejection"));
+  logError("promise", e.reason?.message || String(e.reason || "unhandled rejection"),
+    { code: e.reason?.code || "", detail: e.reason?.stack ? String(e.reason.stack).split("\n").slice(0, 4).join(" | ") : "" });
 });
 
 // Smooth navigation: instead of instantly wiping the page (which feels
@@ -4902,7 +5008,7 @@ async function viewEvent(id) {
           <p class="form-hint">Paid tickets are refunded <strong>in full</strong> automatically - the money returns to the card or account you paid with within a few business days. Sorry, and see you at the <a href="/">next one</a>!</p>
           ` : ev.officeHours ? `
           <span class="badge badge-esn">Office hours</span>
-          <p style="font-size:.9rem;margin-top:10px">Drop by - <strong>no ticket needed</strong>. Pick up (or pay in cash for) your <strong>ESNcard</strong>, collect <a href="/shop">shop orders</a>, ask questions or just say hi.</p>
+          <p style="font-size:.9rem;margin-top:10px">Drop by - <strong>no ticket needed</strong>. Pick up ${cashAllowed() ? "(or pay in cash for) " : ""}your <strong>ESNcard</strong>, collect <a href="/shop">shop orders</a>, ask questions or just say hi.</p>
           <p class="form-hint"><a href="/office">All office info &amp; upcoming hours →</a></p>
           ${!ev.published ? `<p class="form-hint">${mi("edit_note")} <strong>Draft</strong> - visible to the team for shift planning.</p>` : ""}
           ` : regMode === "none" ? `
@@ -4948,7 +5054,7 @@ async function viewEvent(id) {
             <span class="badge badge-pending">Payment in progress</span>
             <p class="form-hint" style="margin-top:10px">${mi("hourglass_top")} You started a checkout for this event but didn't finish it - your spot is <strong>held</strong> for you in the meantime.</p>
             ${myReg.stripeSessionUrl ? `<button class="btn btn-magenta btn-block" id="btn-resume-pay">Resume payment →</button>` : ""}
-            <button class="btn btn-ghost btn-block btn-ink" id="btn-cancel-pending">Cancel checkout &amp; free my spot</button>
+            <button class="btn btn-ghost btn-block btn-danger" id="btn-cancel-pending">Cancel checkout &amp; free my spot</button>
             <p class="form-hint">Changed your mind? Cancelling releases the spot instantly so you (or someone else) can grab it again. Unfinished checkouts also cancel themselves after ~30 minutes.</p>`
               : `<p class="form-hint">${mi("check_circle")} You ${isPast ? "attended this one with" : "already have"} a ticket for this event${isPast ? "" : " - it's <strong>one ticket per person</strong>"}.</p>
             <a href="/ticket/${myReg.id}" class="btn btn-dark btn-block">View my ticket</a>
@@ -5274,7 +5380,7 @@ async function viewMyTickets() {
         <span class="tk-actions">${live
           ? `<a class="btn btn-sm btn-dark" href="/ticket/${r.id}">${mi("qr_code_2", "sm")} Ticket</a>`
           : r.status === "pending"
-          ? `${r.stripeSessionUrl ? `<a class="btn btn-sm btn-magenta" href="${esc(r.stripeSessionUrl)}">Pay</a>` : ""}<button class="btn btn-sm btn-ghost btn-cancel-pending-reg" data-rid="${r.id}" style="color:var(--esn-magenta)">Cancel</button>`
+          ? `${r.stripeSessionUrl ? `<a class="btn btn-sm btn-magenta" href="${esc(r.stripeSessionUrl)}">Pay</a>` : ""}<button class="btn btn-sm btn-ghost btn-cancel-pending-reg btn-danger" data-rid="${r.id}">Cancel</button>`
           : `<a class="btn btn-sm btn-ghost btn-ink" href="/event/${r.eventId}">Event</a>`}
           ${r.checkedInAt ? `<a class="btn btn-sm btn-ghost" style="color:var(--esn-orange)" href="/rate/${r.id}">${myFeedback[r.id] ? `★ ${myFeedback[r.id].rating}` : "Rate ★"}</a>` : ""}</span>
       </div>
@@ -5354,7 +5460,7 @@ async function viewMyTickets() {
               : `<span class="badge badge-pending">${esc(o.status)}</span>`}</td>
             <td style="white-space:nowrap" class="card-actions">${o.pickedUpAt || o.status === "pending" ? "" : `<a class="btn btn-sm btn-dark" href="/order/${o.id}">QR</a>`}
               ${o.status === "pending" && o.stripeSessionUrl ? `<a class="btn btn-sm btn-magenta" href="${esc(o.stripeSessionUrl)}">Pay</a>` : ""}
-              ${o.status === "requested" ? `<button class="btn btn-sm btn-ghost btn-cancel-merch" data-oid="${o.id}" style="color:var(--esn-magenta)">Cancel</button>` : ""}</td>
+              ${o.status === "requested" ? `<button class="btn btn-sm btn-ghost btn-cancel-merch btn-danger" data-oid="${o.id}">Cancel</button>` : ""}</td>
           </tr>`).join("")}
         </tbody>
       </table></div>
@@ -5494,7 +5600,7 @@ async function viewTicket(regId) {
             <p class="ticket-code">${esc(`${location.origin}/claim/${reg.id}/${reg.transferCode}`)}</p>
             <p class="ticket-btns">
               <button class="btn btn-sm btn-cyan" id="btn-share-transfer">${mi("share", "sm")} Share link</button>
-              <button class="btn btn-sm btn-ghost" id="btn-cancel-transfer" style="color:var(--esn-magenta)">Cancel transfer</button>
+              <button class="btn btn-sm btn-ghost btn-danger" id="btn-cancel-transfer">Cancel transfer</button>
             </p>
           </div>
         ` : ""}
@@ -5860,7 +5966,7 @@ async function viewShop() {
       } else if (a2.status === "applied") {
         cardTile = (a2.price ?? cardPricing.student) === 0
           ? esncardShopTile("ESNcard - application received", "Free team card - pick it up during office hours.", "/office", "Office hours")
-          : esncardShopTile("ESNcard - application received", `Almost there: pay ${fmtMoney(a2.price ?? cardPricing.student)} online from your account page, or in cash during office hours.`, "/account", "Finish payment");
+          : esncardShopTile("ESNcard - application received", `Almost there: pay ${fmtMoney(a2.price ?? cardPricing.student)} online from your account page${cashAllowed() ? ", or in cash during office hours" : ""}.`, "/account", "Finish payment");
       } else if (a2.status === "paid") {
         cardTile = esncardShopTile("ESNcard - being prepared", "Paid ✓ - the board is preparing your card. You'll get an e-mail the moment it's ready for pickup.", "/account", "View status");
       } else if (a2.status === "active" && !a2.pickedUpAt) {
@@ -6371,7 +6477,7 @@ async function viewOffice() {
 
         <h3 class="section-title sm">What you can do here</h3>
         <div class="office-tiles">
-          <div class="office-tile">${mi("badge")}<strong>ESNcard</strong><small>Pick up your card, pay in cash if you didn't online. Bring proof of exchange.</small></div>
+          <div class="office-tile">${mi("badge")}<strong>ESNcard</strong><small>${cashAllowed() ? "Pick up your card, pay in cash if you didn't online." : "Pick up your card (paid online in the app)."} Bring proof of exchange.</small></div>
           <div class="office-tile">${mi("shopping_bag")}<strong>Shop orders</strong><small>Collect (and pay for) merch - show the order QR from <a href="/my-tickets">My tickets</a>.</small></div>
           <div class="office-tile">${mi("forum")}<strong>Questions &amp; a chat</strong><small>Events, trips, life in Ghent… come say hi.</small></div>
         </div>
@@ -6559,7 +6665,7 @@ async function viewAlumni() {
       </td>
       <td data-l="Nationality">${esc(u.nationality || "-")}</td>
       <td data-l="History"><button class="btn btn-sm btn-ghost al-hist" data-uid="${u.id}">${mi("history", "sm")} History</button></td>
-      <td class="card-actions"><button class="btn btn-sm btn-ghost al-remove" data-uid="${u.id}" title="Remove from alumni" style="color:var(--esn-magenta)">✕</button></td>
+      <td class="card-actions"><button class="btn btn-sm btn-ghost btn-danger al-remove" data-uid="${u.id}" title="Remove from alumni">✕</button></td>
     </tr>
     <tr class="al-hist-row" data-uid="${u.id}" hidden><td colspan="4"><div class="al-hist-box form-hint">Loading…</div></td></tr>`;
 
@@ -6744,7 +6850,7 @@ function viewFaq() {
     ["Where do I see who registered?",
       `Admin → the event → full list with status, check-ins and ticket types, plus <strong>Export CSV</strong>. The waitlist (with a copy-all-emails button) is below the registrations.`],
     ["How do I verify someone's ESNcard?",
-      `Admin → <strong>ESNcards</strong>. Applications pay online by default and flip to <strong>paid</strong> automatically; cash payments during office hours you mark received yourself. Enter the physical card's number and <strong>Assign &amp; activate</strong> - the app checks for typos and numbers already assigned to someone else. Tick <strong>picked up</strong> the moment the card is handed over at the office (the "To pick up" filter shows who still needs theirs). <strong>Decline</strong> asks for a reason the student sees - online payments are refunded automatically. Demographics live under <strong>Insights → Members &amp; map</strong>; the treasurer/president can adjust the card prices at the top of the Users tab.`],
+      `Admin → <strong>Users → ESNcard</strong>. <strong>To assign</strong> (default) lists everyone who paid: type the number on the physical card and press Enter - the app checks it on esncard.org (typos, duplicates, blocked cards), links it and e-mails the student. <strong>Office - unpaid</strong> lists people paying at the desk: click <strong>Paid?</strong>, confirm you received the money, then the card field appears. <strong>To pick up</strong>: one click on <strong>Handed over</strong> when you give them the card. <strong>Reject…</strong> asks for a reason the student sees and can fix; online payments are refunded automatically. <em>Details</em> under a name shows everything they filled in. Numbers and charts live under <strong>Insights → Members &amp; map</strong>; the treasurer/president adjust card prices under Settings → ESNcard, and the superadmin edits the "card ready" e-mail there too.`],
     ["How do I put office hours in the app?",
       `Admin → <strong>+ Office hours</strong> - a mini-form (date, times, done; never a price) that can create a whole <strong>weekly series</strong> in one go. Each session appears on the <a href="/office">Office page</a> and the calendar, students see a drop-in note instead of a ticket button, and a shiftlist with <strong>2 board spots</strong> is created automatically - board members sign up under <a href="/shifts">Shifts</a>, and office shifts are counted separately on everyone's account.`],
     ["How do event tags & colours work?",
@@ -7005,7 +7111,7 @@ function viewPrivacy() {
         <li><strong>Account basics</strong> - your name, email address and profile photo from your Google account, used to sign you in and identify your tickets.</li>
         <li><strong>Profile details you choose to add</strong> - birthday, phone number, nationality and home university. These are optional and help us organise events (e.g. contacting you about a trip). You can edit or remove them at any time on your profile page.</li>
         <li><strong>Registrations &amp; tickets</strong> - which events you registered for, ticket type, amount paid, and whether your ticket was scanned at the entrance. Board members (admins) can see this to run events.</li>
-        <li><strong>ESNcard</strong> - your card application (exchange details, your proof-of-exchange image, and the passport/ID number if you chose to provide it), your card number, and its status and validity dates.</li>
+        <li><strong>ESNcard</strong> - your card application (exchange details, stay period, home university and your proof-of-exchange file), your card number, and its status and validity dates.</li>
         <li><strong>Waitlist entries</strong> - your name and email for events you queued for.</li>
         <li><strong>App preferences</strong> - your notification choices, your personal bucketlist progress on the Ghent guide, and (if you enable notifications) a push token that identifies your device to deliver them. Your event check-ins are shown back to you as stamps in your ESN Passport.</li>
       </ul>
@@ -7036,7 +7142,7 @@ function viewPrivacy() {
 
       <h3>Deleting your account</h3>
       <p>Deleting your account removes your profile, notification tokens, waitlist entries, messages to the board, open reimbursement requests, upcoming shift sign-ups, any team role and your login. Past tickets, shop orders, ratings and past shifts stay as anonymous records (no name or e-mail) for attendance counts and accounting. If an ESNcard was issued to you, the issue record (name + card number) is kept as proof of the issued card; all other details on it are erased. This cannot be undone.</p>
-      ${currentUser ? `<p><button class="btn btn-ghost" id="btn-delete-account" style="color:var(--esn-magenta);border-color:var(--esn-magenta)">Delete my account &amp; data</button></p>` : `<p class="form-hint">Sign in to delete your account, or email us.</p>`}
+      ${currentUser ? `<p><button class="btn btn-ghost btn-danger" id="btn-delete-account">Delete my account &amp; data</button></p>` : `<p class="form-hint">Sign in to delete your account, or email us.</p>`}
     </div>
   `;
   document.getElementById("btn-delete-account")?.addEventListener("click", deleteMyAccount);
@@ -7320,7 +7426,9 @@ async function viewAccount() {
           <p class="acct-state"><span class="badge badge-requested">${mi("hourglass_top", "sm")} Application received</span></p>
           <p class="acct-note">${myCardPrice() === 0
             ? `Your card is <strong>free</strong> (team) - the board assigns a number and e-mails you.`
-            : `Pay <strong>${fmtMoney(myCardPrice())}</strong> online or in cash at <a href="/office">office hours</a> - then the board assigns your number and e-mails you.`}</p>
+            : cashAllowed()
+              ? `Pay <strong>${fmtMoney(myCardPrice())}</strong> online or in cash at <a href="/office">office hours</a> - then the board assigns your number and e-mails you.`
+              : `Not paid yet - pay <strong>${fmtMoney(myCardPrice())}</strong> online below and the board assigns your number and e-mails you.`}</p>
           <div class="form-actions">
             ${myCardPrice() > 0 ? `<button class="btn btn-cyan btn-sm" id="btn-card-pay">Pay ${fmtMoney(myCardPrice())} online</button>` : ""}
             <a href="/esncard-apply" class="btn btn-ghost btn-sm btn-ink">Edit application</a>
@@ -7422,7 +7530,7 @@ async function viewAccount() {
       const res = await fn({});
       location.href = res.data.url;
     } catch (err) {
-      toast("Online payment isn't available right now - you can always pay in cash during office hours. (" + (err.message || "") + ")", "error");
+      toast(`Online payment isn't available right now - please try again in a minute${cashAllowed() ? ", or pay in cash during office hours" : ""}. (` + (err.message || "") + ")", "error");
       btnIdle(e.target);
     }
   });
@@ -7553,7 +7661,7 @@ async function viewProfile() {
         <div class="form-card">
           <p style="font-size:.85rem"><strong>Privacy.</strong> Read our <a href="/privacy">privacy policy</a> to see exactly what we store and why.</p>
           <div class="form-actions" style="margin-top:10px">
-            <button class="btn btn-ghost btn-sm" id="btn-delete-account" style="color:var(--esn-magenta)">Delete my account &amp; data</button>
+            <button class="btn btn-ghost btn-sm btn-danger" id="btn-delete-account">Delete my account &amp; data</button>
           </div>
         </div>
       </div>
@@ -7684,33 +7792,46 @@ async function viewEsncardApply() {
   const proofPrefill = existingProof?.image || a.proofImage || null; // inline image (a.proofImage = pre-1.4 docs)
   const proofPdfPrefill = existingProof?.file || null;              // previously uploaded PDF
 
+  const btnLabel = resubmit ? "Resubmit" : existing ? "Update" : "Submit";
+  const priceNow = myCardPrice();
+  // "Other" anywhere in a list gets a free-text field next to it (v1.2.0).
+  const isOther = (v) => /^other\b/i.test(String(v || ""));
+  const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+  const now = new Date();
+  const monthOptions = (sel, blank) => (blank ? `<option value="">- month -</option>` : "")
+    + MONTHS.map((m, i) => `<option value="${String(i + 1).padStart(2, "0")}" ${sel === String(i + 1).padStart(2, "0") ? "selected" : ""}>${m}</option>`).join("");
+  const yearOptions = (sel, blank) => (blank ? `<option value="">- year -</option>` : "")
+    + [now.getFullYear() - 1, now.getFullYear(), now.getFullYear() + 1, now.getFullYear() + 2, now.getFullYear() + 3]
+      .map((y) => `<option value="${y}" ${String(sel) === String(y) ? "selected" : ""}>${y}</option>`).join("");
+  const [fromY, fromM] = (a.stayFrom || `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`).split("-");
+  const [toY, toM] = (a.stayUntil || "-").split("-");
+  const untilOpen = a.stayUntilUnknown === true || (!a.stayUntil && !!existing);
   $app.innerHTML = `
     <h2 class="section-title">${renewal ? "Renew your ESNcard" : orphaned ? "Apply again for an ESNcard" : resubmit ? "Fix &amp; resubmit your ESNcard application" : existing ? "Edit your ESNcard application" : "Apply for your ESNcard"}</h2>
-    ${renewal ? `<p class="form-hint" style="margin:-8px 0 14px">Your previous card expired - check that everything below is still correct, submit, and you'll get a fresh card with a new number.</p>` : ""}
-    ${orphaned ? `<p class="form-hint" style="margin:-8px 0 14px">Your previous card is no longer linked to this account - check that everything below is still correct and submit to apply for a new one.</p>` : ""}
-    <div class="form-actions" style="margin:0 0 14px">
-      <a href="/account" class="btn btn-ghost btn-sm btn-ink">← My account</a>
-    </div>
+    <p class="form-hint" style="margin:-8px 0 14px">${renewal
+      ? "Your previous card expired - check that everything below is still correct, submit, and you'll get a fresh card with a new number."
+      : orphaned ? "Your previous card is no longer linked to this account - check that everything below is still correct and submit to apply for a new one."
+      : `Takes about two minutes. ${priceNow === 0 ? "Your card is free as a team member." : `The card costs <strong>${fmtMoney(priceNow)}</strong>${priceNow === cardPricing.volunteer && priceNow > 0 ? " (volunteer/alumni price)" : ""} and is valid ${cardPricing.validityMonths || 12} months.`} You pick it up at <a href="/office">office hours</a>.`}</p>
     ${resubmit && a.declineReason ? `<div class="form-card" style="margin:0 0 14px;border-left:4px solid var(--esn-orange)"><p style="margin:0;font-size:.9rem"><strong>Why it was declined:</strong> ${esc(a.declineReason)}</p></div>` : ""}
     <form class="form-card" id="esncard-form" style="max-width:760px">
 
       <div class="form-section first">
         <div class="form-section-head">
           <span class="form-step">1</span>
-          <div><strong>Who you are</strong><p class="form-hint">Exactly as on your ID - this goes on your card.</p></div>
+          <div><strong>You</strong><p class="form-hint">Name exactly as on your ID - it goes on the card.</p></div>
         </div>
         <div class="form-grid">
           <div class="form-field">
             <label for="ea-first">First name *</label>
-            <input id="ea-first" required maxlength="60" value="${esc(firstGuess)}" />
+            <input id="ea-first" required maxlength="60" autocomplete="given-name" value="${esc(firstGuess)}" />
           </div>
           <div class="form-field">
             <label for="ea-last">Last name *</label>
-            <input id="ea-last" required maxlength="60" value="${esc(lastGuess)}" />
+            <input id="ea-last" required maxlength="60" autocomplete="family-name" value="${esc(lastGuess)}" />
           </div>
           <div class="form-field">
             <label for="ea-bday">Date of birth *</label>
-            <input id="ea-bday" type="date" required value="${esc(a.birthday || p.birthday || "")}" />
+            <input id="ea-bday" type="date" required autocomplete="bday" value="${esc(a.birthday || p.birthday || "")}" />
           </div>
           <div class="form-field">
             <label for="ea-nat">Nationality *</label>
@@ -7720,13 +7841,8 @@ async function viewEsncardApply() {
             </select>
           </div>
           <div class="form-field">
-            <label for="ea-phone">Phone</label>
-            <input id="ea-phone" type="tel" maxlength="30" placeholder="+32 ..." value="${esc(a.phone || p.phone || "")}" />
-          </div>
-          <div class="form-field">
-            <label for="ea-id">Passport / ID number (optional)</label>
-            <input id="ea-id" maxlength="30" value="${esc(a.idNumber || "")}" />
-            <span class="form-hint">Only used for card registration; see the <a href="/privacy">privacy policy</a>.</span>
+            <label for="ea-phone">Phone (optional)</label>
+            <input id="ea-phone" type="tel" maxlength="30" autocomplete="tel" placeholder="+32 ..." value="${esc(a.phone || p.phone || "")}" />
           </div>
         </div>
       </div>
@@ -7734,7 +7850,7 @@ async function viewEsncardApply() {
       <div class="form-section">
         <div class="form-section-head">
           <span class="form-step">2</span>
-          <div><strong>Your exchange</strong><p class="form-hint">Where you study in Ghent, and proof that you're on exchange.</p></div>
+          <div><strong>Your exchange</strong><p class="form-hint">Where you study in Ghent${proofRequired ? ", plus one document that proves it" : ""}.</p></div>
         </div>
         <div class="form-grid">
           <div class="form-field">
@@ -7745,6 +7861,7 @@ async function viewEsncardApply() {
               ${a.hostInstitution && !HOST_INSTITUTIONS.includes(a.hostInstitution)
                 ? `<option value="${esc(a.hostInstitution)}" selected>${esc(a.hostInstitution)}</option>` : ""}
             </select>
+            <input id="ea-host-other" class="other-input ${isOther(a.hostInstitution) ? "" : "hidden"}" maxlength="100" placeholder="Which institution?" value="${esc(a.hostInstitutionOther || "")}" />
           </div>
           <div class="form-field">
             <label for="ea-stay">Type of stay *</label>
@@ -7752,33 +7869,50 @@ async function viewEsncardApply() {
               <option value="">- select -</option>
               ${STAY_TYPES.map((t) => `<option value="${esc(t)}" ${a.stayType === t ? "selected" : ""}>${esc(t)}</option>`).join("")}
             </select>
+            <input id="ea-stay-other" class="other-input ${isOther(a.stayType) ? "" : "hidden"}" maxlength="100" placeholder="What kind of stay?" value="${esc(a.stayTypeOther || "")}" />
+          </div>
+          <div class="form-field">
+            <label>Staying in Ghent from *</label>
+            <div class="month-row">
+              <select id="ea-from-m" required>${monthOptions(fromM)}</select>
+              <select id="ea-from-y" required>${yearOptions(fromY)}</select>
+            </div>
+          </div>
+          <div class="form-field">
+            <label>Until</label>
+            <div class="month-row">
+              <select id="ea-to-m" ${untilOpen ? "disabled" : ""}>${monthOptions(toM, true)}</select>
+              <select id="ea-to-y" ${untilOpen ? "disabled" : ""}>${yearOptions(toY, true)}</select>
+            </div>
+            <label class="checkbox-row" style="margin-top:6px"><input type="checkbox" id="ea-to-open" ${untilOpen ? "checked" : ""} /> <span style="text-transform:none;letter-spacing:0;font-weight:500">I don't know the end date yet</span></label>
           </div>
           <div class="form-field">
             <label for="ea-homeuni">Home university</label>
             <input id="ea-homeuni" maxlength="120" value="${esc(a.homeUniversity || p.university || "")}" />
           </div>
           <div class="form-field">
-            <label for="ea-homecity">Home university city</label>
-            <input id="ea-homecity" maxlength="80" value="${esc(a.homeCity || p.homeCity || "")}" />
-          </div>
-          <div class="form-field full">
-            <label for="ea-field">Field of studies</label>
-            <select id="ea-field">
+            <label for="ea-homecountry">Home country</label>
+            <select id="ea-homecountry">
               <option value="">- select -</option>
-              ${STUDY_FIELDS.map((f2) => `<option value="${esc(f2)}" ${a.fieldOfStudies === f2 ? "selected" : ""}>${esc(f2)}</option>`).join("")}
-              ${a.fieldOfStudies && !STUDY_FIELDS.includes(a.fieldOfStudies)
-                ? `<option value="${esc(a.fieldOfStudies)}" selected>${esc(a.fieldOfStudies)}</option>` : ""}
+              ${NATIONALITIES.map((c) => `<option value="${esc(c)}" ${(a.homeCountry || p.homeCountry) === c ? "selected" : ""}>${esc(c)}</option>`).join("")}
             </select>
+          </div>
+          <div class="form-field">
+            <label for="ea-homecity">Home city</label>
+            <input id="ea-homecity" maxlength="80" placeholder="Start typing - pick from the list" autocomplete="off" value="${esc(a.homeCity || p.homeCity || "")}" />
           </div>
           ${proofRequired ? `
           <div class="form-field full">
-            <label for="ea-proof-file">Proof of exchange *</label>
-            <div class="img-upload-row">
-              <img id="ea-proof-preview" class="img-preview ${proofPrefill ? "" : "hidden"}" src="${esc(proofPrefill || "")}" alt="" />
-              <span id="ea-proof-pdf" class="badge badge-paid ${proofPdfPrefill ? "" : "hidden"}">PDF uploaded ✓</span>
-              <input id="ea-proof-file" type="file" accept="image/*,application/pdf" />
+            <label>Proof of exchange *</label>
+            <div class="attach-box" id="ea-proof-box">
+              <input id="ea-proof-file" type="file" accept="image/*,application/pdf" class="hidden" />
+              <button type="button" class="btn btn-sm btn-ink btn-ghost" id="ea-proof-pick">${mi("attach_file", "sm")} Attach a file</button>
+              <span id="ea-proof-name" class="attach-name ${proofPrefill || proofPdfPrefill ? "" : "form-hint"}">${proofPdfPrefill ? "PDF attached ✓" : proofPrefill ? "Photo attached ✓" : "JPG or PNG (photo / screenshot), or a PDF - max 5 MB"}</span>
+              <button type="button" class="btn btn-sm btn-ghost btn-danger ${proofPrefill || proofPdfPrefill ? "" : "hidden"}" id="ea-proof-clear">Remove</button>
             </div>
-            <span class="form-hint">A photo, screenshot or <strong>PDF (max 5 MB)</strong> of your acceptance letter, student card or exchange confirmation. Photos are compressed automatically. Proofs are deleted again a few months after your card is activated.</span>
+            <img id="ea-proof-preview" class="img-preview ${proofPrefill ? "" : "hidden"}" src="${esc(proofPrefill || "")}" alt="" style="margin-top:8px" />
+            <span id="ea-proof-pdf" class="hidden"></span>
+            <span class="form-hint">Your acceptance letter, student card or exchange confirmation. One file: <strong>JPG, PNG or PDF</strong>, max <strong>5 MB</strong> (photos are shrunk automatically, so a phone picture is fine). Proofs are deleted a few months after your card is activated.</span>
           </div>` : ""}
         </div>
       </div>
@@ -7786,41 +7920,51 @@ async function viewEsncardApply() {
       <div class="form-section">
         <div class="form-section-head">
           <span class="form-step">3</span>
-          <div><strong>About ESN</strong><p class="form-hint">Helps us reach the next generation of students.</p></div>
+          <div><strong>Submit</strong><p class="form-hint">${priceNow === 0
+            ? `Free card - you pick it up during <a href="/office">office hours</a>.`
+            : cashAllowed()
+              ? `Pay <strong>${fmtMoney(priceNow)}</strong> online now (card or Bancontact), or in cash when you pick the card up at <a href="/office">office hours</a>.`
+              : `Pay <strong>${fmtMoney(priceNow)}</strong> online (card or Bancontact) - you're taken to the secure payment right after submitting. Pick up the card at <a href="/office">office hours</a>.`}</p></div>
         </div>
-        <div class="form-field">
-          <label>How did you find out about ESN Gent?</label>
-          ${DISCOVERY_OPTIONS.map((d, i) => `
-            <div class="checkbox-row" style="margin-top:6px">
-              <input type="checkbox" id="ea-disc-${i}" ${disc.includes(d) ? "checked" : ""} />
-              <label for="ea-disc-${i}">${esc(d)}</label>
-            </div>`).join("")}
-        </div>
-        <div class="form-field" style="margin-top:14px">
-          <label for="ea-ideas">Any event you'd love us to organise? (optional)</label>
-          <textarea id="ea-ideas" rows="2" maxlength="400">${esc(a.ideas || "")}</textarea>
-        </div>
-      </div>
-
-      <div class="form-section">
-        <div class="form-section-head">
-          <span class="form-step">4</span>
-          <div><strong>Submit</strong><p class="form-hint">${myCardPrice() === 0
-            ? `Your card is <strong>free</strong> (board/AB member) - you pick it up during <a href="/office">office hours</a>.`
-            : `The card costs <strong>${fmtMoney(myCardPrice())}</strong>${myCardPrice() === cardPricing.volunteer && myCardPrice() > 0 ? " (volunteer/alumni price)" : ""} - submitting takes you straight to the <strong>secure online payment</strong>, unless you choose to pay cash during <a href="/office">office hours</a>. Pickup is only during office hours, never at events.`}</p></div>
-        </div>
+        <details class="form-optional" style="margin:0 0 14px">
+          <summary class="form-hint" style="cursor:pointer">Optional: field of studies, how you found us, event ideas</summary>
+          <div class="form-grid" style="margin-top:10px">
+            <div class="form-field full">
+              <label for="ea-field">Field of studies</label>
+              <select id="ea-field">
+                <option value="">- select -</option>
+                ${STUDY_FIELDS.map((f2) => `<option value="${esc(f2)}" ${a.fieldOfStudies === f2 ? "selected" : ""}>${esc(f2)}</option>`).join("")}
+                ${a.fieldOfStudies && !STUDY_FIELDS.includes(a.fieldOfStudies)
+                  ? `<option value="${esc(a.fieldOfStudies)}" selected>${esc(a.fieldOfStudies)}</option>` : ""}
+              </select>
+              <input id="ea-field-other" class="other-input ${isOther(a.fieldOfStudies) ? "" : "hidden"}" maxlength="100" placeholder="Which field?" value="${esc(a.fieldOfStudiesOther || "")}" />
+            </div>
+            <div class="form-field full">
+              <label>How did you find out about ESN Gent?</label>
+              <div class="chip-row">
+                ${DISCOVERY_OPTIONS.map((d, i) => `
+                  <label class="chip-check"><input type="checkbox" id="ea-disc-${i}" data-other="${isOther(d) ? "1" : ""}" ${disc.includes(d) ? "checked" : ""} /> ${esc(d)}</label>`).join("")}
+              </div>
+              <input id="ea-disc-other" class="other-input ${disc.some(isOther) ? "" : "hidden"}" maxlength="100" placeholder="Where did you hear about us?" value="${esc(a.discoveryOther || "")}" />
+            </div>
+            <div class="form-field full">
+              <label for="ea-ideas">Any event you'd love us to organise?</label>
+              <textarea id="ea-ideas" rows="2" maxlength="400">${esc(a.ideas || "")}</textarea>
+            </div>
+          </div>
+        </details>
         <div class="checkbox-row">
           <input type="checkbox" id="ea-privacy" ${a.privacyAccepted ? "checked" : ""} />
           <label for="ea-privacy">I have read and accept the <a href="/privacy" target="_blank">privacy policy</a> *</label>
         </div>
         <div class="form-actions">
-          ${myCardPrice() > 0 ? `
-            <button type="submit" class="btn btn-magenta" id="ea-submit-pay">${resubmit ? "Resubmit" : existing ? "Update" : "Submit"} &amp; pay ${fmtMoney(myCardPrice())} online</button>
-            <button type="submit" class="btn btn-ghost btn-ink" id="ea-submit-cash">${resubmit ? "Resubmit" : existing ? "Update" : "Submit"} - I'll pay cash at the office</button>
+          ${priceNow > 0 ? `
+            <button type="submit" class="btn btn-magenta" id="ea-submit-pay">${btnLabel} &amp; pay ${fmtMoney(priceNow)} online</button>
+            ${cashAllowed() ? `<button type="submit" class="btn btn-ghost btn-ink" id="ea-submit-cash">${btnLabel} - I'll pay cash at the office</button>` : ""}
           ` : `
-            <button type="submit" class="btn btn-magenta">${resubmit ? "Resubmit application" : existing ? "Update application" : "Submit application"}</button>
+            <button type="submit" class="btn btn-magenta">${btnLabel} application</button>
           `}
-          <a href="/account" class="btn btn-ghost btn-ink">Cancel</a>
+          <a href="/account" class="btn btn-ghost btn-danger">Cancel</a>
         </div>
       </div>
     </form>
@@ -7829,34 +7973,77 @@ async function viewEsncardApply() {
   let proofImage = proofPrefill;
   let proofPdf = null; // freshly picked PDF File (uploaded to Storage at submit)
   let proofChanged = false;
-  wireCityPicker("ea-homecity", null);
+  wireCityPicker("ea-homecity", "ea-homecountry");
+  // "Other" → show the free-text field right under the list (v1.2.0)
+  for (const [selId, otherId] of [["ea-host", "ea-host-other"], ["ea-stay", "ea-stay-other"], ["ea-field", "ea-field-other"]]) {
+    const sel = document.getElementById(selId), other = document.getElementById(otherId);
+    if (!sel || !other) continue;
+    sel.addEventListener("change", () => {
+      const show = isOther(sel.value);
+      other.classList.toggle("hidden", !show);
+      if (show) other.focus();
+    });
+  }
+  document.querySelectorAll('[id^="ea-disc-"][data-other="1"]').forEach((cb) => {
+    cb.addEventListener("change", () => {
+      const other = document.getElementById("ea-disc-other");
+      other?.classList.toggle("hidden", !cb.checked);
+      if (cb.checked) other?.focus();
+    });
+  });
+  document.getElementById("ea-to-open")?.addEventListener("change", (e) => {
+    for (const id of ["ea-to-m", "ea-to-y"]) {
+      const el = document.getElementById(id);
+      el.disabled = e.target.checked;
+      if (e.target.checked) el.value = "";
+    }
+  });
+  // Proof attachment (v1.1.0): one file, picked through a real button.
+  // Images are compressed client-side (any size in, ≤ ~400 KB out);
+  // PDFs go to Storage as-is, so they're capped at 5 MB (rules-enforced).
+  let proofRemoved = false;
+  const proofName = document.getElementById("ea-proof-name");
+  const proofClear = document.getElementById("ea-proof-clear");
+  const proofPrev = document.getElementById("ea-proof-preview");
+  const showProof = (label, ok) => {
+    if (!proofName) return;
+    proofName.textContent = label;
+    proofName.classList.toggle("form-hint", !ok);
+    proofClear?.classList.toggle("hidden", !ok);
+  };
+  document.getElementById("ea-proof-pick")?.addEventListener("click", () => document.getElementById("ea-proof-file")?.click());
+  proofClear?.addEventListener("click", () => {
+    proofImage = null; proofPdf = null; proofChanged = true; proofRemoved = true;
+    const input = document.getElementById("ea-proof-file"); if (input) input.value = "";
+    proofPrev?.classList.add("hidden");
+    showProof("JPG or PNG (photo / screenshot), or a PDF - max 5 MB", false);
+  });
   document.getElementById("ea-proof-file")?.addEventListener("change", async (e) => {
     const file = e.target.files[0];
     if (!file) return;
+    const short = file.name.length > 34 ? file.name.slice(0, 30) + "…" + file.name.slice(-4) : file.name;
     try {
-      const prev = document.getElementById("ea-proof-preview");
-      const pdfChip = document.getElementById("ea-proof-pdf");
       if (file.type === "application/pdf") {
         if (file.size > 5 * 1024 * 1024) {
-          throw new Error("That PDF is over 5 MB - a photo or screenshot of the letter works too.");
+          throw new Error(`That PDF is ${(file.size / 1024 / 1024).toFixed(1)} MB - the limit is 5 MB. A photo or screenshot of the letter works too.`);
         }
-        proofPdf = file;
-        proofImage = null;
-        proofChanged = true;
-        prev.classList.add("hidden");
-        pdfChip.textContent = `PDF ready ✓ ${file.name.length > 28 ? file.name.slice(0, 27) + "…" : file.name}`;
-        pdfChip.classList.remove("hidden");
-      } else {
+        proofPdf = file; proofImage = null; proofChanged = true; proofRemoved = false;
+        proofPrev?.classList.add("hidden");
+        showProof(`${short} (${(file.size / 1024).toFixed(0)} KB) ✓`, true);
+      } else if (file.type.startsWith("image/")) {
+        if (file.size > 25 * 1024 * 1024) throw new Error("That photo is over 25 MB - please pick a smaller one or a screenshot.");
+        showProof("Preparing photo…", false);
         proofImage = await compressImage(file);
-        proofPdf = null;
-        proofChanged = true;
-        pdfChip.classList.add("hidden");
-        prev.src = proofImage;
-        prev.classList.remove("hidden");
+        proofPdf = null; proofChanged = true; proofRemoved = false;
+        if (proofPrev) { proofPrev.src = proofImage; proofPrev.classList.remove("hidden"); }
+        showProof(`${short} ✓`, true);
+      } else {
+        throw new Error("Only JPG, PNG or PDF files are accepted - a photo or screenshot of the document works too.");
       }
     } catch (err) {
       toast(err.message, "error");
       e.target.value = "";
+      if (!proofImage && !proofPdf) showProof("JPG or PNG (photo / screenshot), or a PDF - max 5 MB", false);
     }
   });
 
@@ -7879,7 +8066,23 @@ async function viewEsncardApply() {
         return;
       }
     }
-    if (proofRequired && !proofImage && !proofPdf && !proofPdfPrefill) { toast("Please add your proof of exchange (photo, screenshot or PDF).", "error"); return; }
+    // "Other" needs the actual answer
+    for (const [selId, otherId, what] of [["ea-host", "ea-host-other", "which institution you study at"], ["ea-stay", "ea-stay-other", "what kind of stay it is"], ["ea-field", "ea-field-other", "your field of studies"]]) {
+      if (isOther(val(selId)) && !val(otherId)) {
+        document.getElementById(otherId).focus();
+        toast(`Please tell us ${what} (you picked "Other").`, "error");
+        return;
+      }
+    }
+    const discOtherOn = [...document.querySelectorAll('[id^="ea-disc-"][data-other="1"]')].some((cb) => cb.checked);
+    if (discOtherOn && !val("ea-disc-other")) { document.getElementById("ea-disc-other").focus(); toast("Please tell us where you heard about ESN Gent (you ticked \"Other\").", "error"); return; }
+    // Stay period: start required, end optional (or explicitly unknown), end after start
+    const untilUnknown = document.getElementById("ea-to-open").checked;
+    const stayFrom = `${val("ea-from-y")}-${val("ea-from-m")}`;
+    const stayUntil = !untilUnknown && val("ea-to-m") && val("ea-to-y") ? `${val("ea-to-y")}-${val("ea-to-m")}` : "";
+    if (!untilUnknown && (val("ea-to-m") || val("ea-to-y")) && !stayUntil) { toast("Please pick both the month and the year of your end date - or tick 'I don't know the end date yet'.", "error"); return; }
+    if (stayUntil && stayUntil < stayFrom) { toast("Your end date is before your start date - please check the months.", "error"); return; }
+    if (proofRequired && !proofImage && !proofPdf && (!proofPdfPrefill || proofRemoved)) { toast("Please attach your proof of exchange (photo, screenshot or PDF).", "error"); return; }
     if (!document.getElementById("ea-privacy").checked) { toast("Please accept the privacy policy.", "error"); return; }
     submitBtns.forEach((b) => { b.disabled = true; });
     if (submitBtn) submitBtn.textContent = "Submitting…";
@@ -7892,18 +8095,25 @@ async function viewEsncardApply() {
       birthday: val("ea-bday"),
       nationality: val("ea-nat"),
       phone: val("ea-phone"),
-      idNumber: val("ea-id"),
       hostInstitution: val("ea-host"),
+      hostInstitutionOther: isOther(val("ea-host")) ? val("ea-host-other") : "",
       stayType: val("ea-stay"),
+      stayTypeOther: isOther(val("ea-stay")) ? val("ea-stay-other") : "",
+      stayFrom,                      // "YYYY-MM"
+      stayUntil,                     // "YYYY-MM" or "" when open-ended
+      stayUntilUnknown: untilUnknown,
       homeUniversity: val("ea-homeuni"),
+      homeCountry: val("ea-homecountry"),
       homeCity: val("ea-homecity"),
       fieldOfStudies: val("ea-field"),
+      fieldOfStudiesOther: isOther(val("ea-field")) ? val("ea-field-other") : "",
       discovery: DISCOVERY_OPTIONS.filter((d, i) => document.getElementById(`ea-disc-${i}`).checked),
+      discoveryOther: discOtherOn ? val("ea-disc-other") : "",
       ideas: val("ea-ideas"),
       // the proof itself lives in applicationProofs/{uid} (inline image or
       // a Storage-PDF pointer). With the welcome-week switch OFF there may
       // legitimately be no proof at all.
-      hasProof: !!(proofImage || proofPdf || proofPdfPrefill),
+      hasProof: !!(proofImage || proofPdf || (proofPdfPrefill && !proofRemoved)),
       price: myCardPrice(), // €0 board/AB · €7.50 volunteer/alumni · €15 student
       privacyAccepted: true,
       status: "applied",
@@ -7922,9 +8132,14 @@ async function viewEsncardApply() {
         const url = await getDownloadURL(r);
         await setDoc(doc(db, "applicationProofs", currentUser.uid), {
           file: url, contentType: "application/pdf",
+          name: String(proofPdf.name || "proof.pdf").slice(0, 120), size: proofPdf.size,
           updatedAt: serverTimestamp(),
         });
         if (submitBtn) submitBtn.textContent = "Submitting…";
+      } else if (proofRemoved && !proofImage && !proofPdf) {
+        // proof taken away (only possible when the welcome-week switch made it optional)
+        await deleteDoc(doc(db, "applicationProofs", currentUser.uid)).catch(() => {});
+        if (proofPdfPrefill) deleteObject(storageRef(storage, `proofs/${currentUser.uid}/proof.pdf`)).catch(() => {});
       } else if (proofImage && (proofChanged || !existingProof)) {
         await setDoc(doc(db, "applicationProofs", currentUser.uid), {
           image: proofImage,
@@ -7934,8 +8149,22 @@ async function viewEsncardApply() {
         if (proofPdfPrefill) deleteObject(storageRef(storage, `proofs/${currentUser.uid}/proof.pdf`)).catch(() => {});
       }
       await setDoc(doc(db, "esncardApplications", currentUser.uid), data);
-      // keep the profile in sync (fills the card replica too)
-      await setDoc(doc(db, "users", currentUser.uid), {
+      // Snapshot of this submission (v1.3.0) - the board sees previous
+      // submissions on the user page even after edits and renewals.
+      // Never blocks the application: a failed snapshot is only logged.
+      addDoc(collection(db, "esncardApplications", currentUser.uid, "history"), {
+        ...data,
+        createdAt: existing?.createdAt || null,
+        updatedAt: null,
+        submittedAt: serverTimestamp(),
+        kind: renewal ? "renewal" : orphaned ? "reapply" : resubmit ? "resubmit" : existing ? "update" : "new",
+        payChoice: myCardPrice() === 0 ? "free" : payCash ? "cash" : "online",
+        version: APP_VERSION,
+      }).catch((err) => logError("app", "submission snapshot: " + (err?.message || err)));
+      // Keep the profile in sync (fills the card replica and the event
+      // registration profile too). Only what was actually filled in is
+      // written - an empty optional field never blanks a profile value.
+      const profileSync = {
         firstName: data.firstName,
         lastName: data.lastName,
         displayName: `${data.firstName} ${data.lastName}`.trim(),
@@ -7944,14 +8173,15 @@ async function viewEsncardApply() {
         phone: data.phone,
         university: data.homeUniversity,
         homeCity: data.homeCity,
-        // The apply form doesn't ask for home country separately - prefill
-        // it from nationality (editable on the profile) so finishing the
-        // ESNcard flow also completes the event-registration profile
-        // instead of bouncing the student into a second form (v0.130).
-        ...(myProfile?.homeCountry ? {} : { homeCountry: data.nationality }),
+        // Home country from the form (v1.2.0); nationality is the fallback so
+        // finishing the ESNcard flow also completes the event-registration
+        // profile instead of bouncing the student into a second form.
+        homeCountry: data.homeCountry || myProfile?.homeCountry || data.nationality,
+        hostInstitution: data.hostInstitution,
         email: currentUser.email || "",
-        updatedAt: serverTimestamp(),
-      }, { merge: true });
+      };
+      for (const k of Object.keys(profileSync)) if (!profileSync[k]) delete profileSync[k];
+      await setDoc(doc(db, "users", currentUser.uid), { ...profileSync, updatedAt: serverTimestamp() }, { merge: true });
       // Default path: straight to the secure online payment. Cash is the
       // explicit opt-out; free (team) cards skip payment entirely.
       if (myCardPrice() > 0 && !payCash) {
@@ -7963,7 +8193,7 @@ async function viewEsncardApply() {
           location.href = res.data.url;
           return;
         } catch (payErr) {
-          toast("Application saved, but the payment page couldn't open - you can pay from your account page, or in cash during office hours. (" + (payErr.message || "") + ")", "error");
+          toast(`Application saved, but the payment page couldn't open - you can pay from your account page${cashAllowed() ? ", or in cash during office hours" : ""}. (` + (payErr.message || "") + ")", "error");
           navigate("/account");
           return;
         }
@@ -8208,6 +8438,7 @@ async function viewAdmin(sub) {
   if (sub === "analytics") return viewAdminAnalytics();
   if (sub === "reimbursements") return viewAdminReimbursements();
   if (sub === "users") return viewAdminUsers();
+  if (sub === "accounts") return viewAdminUsers(ayStartYear(), false, "users");
   if (sub === "members") return viewAdminMembers();
   if (sub === "team") return viewAdminTeam();
   if (sub === "inbox") return viewAdminInbox();
@@ -8222,9 +8453,9 @@ async function viewAdmin(sub) {
 async function viewAdminUserDetail(uid) {
   setLoading();
   let u, regs, notes = "";
-  let userShifts = [], hist = {}, teamDoc = null;
+  let userShifts = [], hist = {}, teamDoc = null, subs = [], currentApp = null;
   try {
-    [u, regs, notes, userShifts, hist, teamDoc] = await Promise.all([
+    [u, regs, notes, userShifts, hist, teamDoc, subs, currentApp] = await Promise.all([
       getDoc(doc(db, "users", uid)).then((s) => (s.exists() ? { id: s.id, ...s.data() } : null)),
       getDocs(query(collection(db, "registrations"), where("uid", "==", uid), orderBy("createdAt", "desc")))
         .then((s) => s.docs.map((d) => ({ id: d.id, ...d.data() }))),
@@ -8233,9 +8464,31 @@ async function viewAdminUserDetail(uid) {
         .then((s) => s.docs.map((d) => d.data())).catch(() => []),
       getDoc(doc(db, "userHistory", uid)).then((s) => (s.exists() ? s.data() : {})).catch(() => ({})),
       getDoc(doc(db, "admins", uid)).then((s) => (s.exists() ? s.data() : null)).catch(() => null),
+      // Previous ESNcard submissions (v1.3.0): every submit of the form is
+      // snapshotted, so renewals and edits stay visible to the board.
+      getDocs(query(collection(db, "esncardApplications", uid, "history"), orderBy("submittedAt", "desc"), limit(30)))
+        .then((s) => s.docs.map((d) => ({ id: d.id, ...d.data() }))).catch(() => []),
+      getDoc(doc(db, "esncardApplications", uid)).then((s) => (s.exists() ? s.data() : null)).catch(() => null),
     ]);
   } catch (e) { $app.innerHTML = errorState(e.message); return; }
   if (!u) { $app.innerHTML = `<div class="empty-state"><p>User not found.</p></div>`; return; }
+  const KIND_LABEL = { new: "New application", update: "Edited application", resubmit: "Resubmitted after rejection", renewal: "Renewal", reapply: "Applied again" };
+  const submissionsHtml = () => {
+    if (!subs.length && !currentApp) return "";
+    const cur = currentApp ? `<p style="margin:0 0 10px;font-size:.92rem">Current application: <strong>${esc(currentApp.status || "-")}</strong>${currentApp.cardNumber ? ` · card <code>${esc(currentApp.cardNumber)}</code>` : ""}${currentApp.createdAt ? ` · applied ${fmtDate(currentApp.createdAt)} ${fmtTime(currentApp.createdAt)}` : ""} - <a href="/admin/users">handle it in the work queue</a></p>` : "";
+    const list = subs.length ? subs.map((x, i) => `
+      <details class="app-full" ${i === 0 ? "" : ""} style="margin:0 0 6px">
+        <summary class="form-hint" style="cursor:pointer">${mi("history", "sm")} <strong>${x.submittedAt ? `${fmtDate(x.submittedAt)} ${fmtTime(x.submittedAt)}` : "-"}</strong> · ${esc(KIND_LABEL[x.kind] || x.kind || "submission")}${x.payChoice ? ` · ${x.payChoice === "cash" ? "wants to pay cash" : x.payChoice === "online" ? "went to online payment" : "free card"}` : ""}${x.version ? ` <small>(app ${esc(x.version)})</small>` : ""}</summary>
+        ${applicationFieldsHtml(x)}
+      </details>`).join("")
+      : `<p class="form-hint" style="margin:0">No snapshot of the form yet - snapshots are kept from v1.3.0 onwards, so only submissions made after that show up here.</p>`;
+    return `
+    <h3 class="section-title sm">ESNcard submissions</h3>
+    <div class="form-card" style="margin-bottom:18px">
+      ${cur}
+      ${list}
+    </div>`;
+  };
   const shiftsDone = userShifts.filter((s) => toDate(s.eventStart) < new Date());
   const officeShiftsDone = shiftsDone.filter((s) => s.officeHours === true);
 
@@ -8279,7 +8532,7 @@ async function viewAdminUserDetail(uid) {
   $app.innerHTML = `
     <h2 class="section-title">${esc(u.displayName || "User")}</h2>
     <div class="form-actions" style="margin:0 0 18px">
-      <a href="/admin/users" class="btn btn-ghost btn-sm" style="color:var(--esn-dark)">← All users</a>
+      <a href="/admin/accounts" class="btn btn-ghost btn-sm" style="color:var(--esn-dark)">← All users</a>
     </div>
     <div class="stat-row">
       <div class="stat-card" style="--accent:#00AEEF"><div class="num">${confirmed.length}</div><div class="lbl">Registrations</div></div>
@@ -8327,7 +8580,7 @@ async function viewAdminUserDetail(uid) {
           </div>
           <div class="form-actions">
             <button class="btn btn-green" id="ud-assign">${mi("verified", "sm")} Verify &amp; assign</button>
-            ${u.esncardCode ? `<button class="btn btn-ghost btn-ink" id="ud-remove" style="color:var(--esn-magenta)">Remove card</button>` : ""}
+            ${u.esncardCode ? `<button class="btn btn-ghost btn-danger" id="ud-remove">Remove card</button>` : ""}
           </div>
           <p class="form-hint" style="margin:8px 0 0">Cards are checked live on esncard.org - a wrong number can't be saved. Only <strong>available</strong> (not-yet-registered) cards can be assigned here; an already-active card belongs to the student and only they can link it from their own account. Assigning sends the pickup e-mail with the number.</p>
         </details>
@@ -8348,6 +8601,8 @@ async function viewAdminUserDetail(uid) {
         </details>
       </div>
     </div>
+
+    ${submissionsHtml()}
 
     ${(teamDoc || boardHist.length) ? `
     <h3 class="section-title sm">Board &amp; team</h3>
@@ -8561,7 +8816,7 @@ function adminTabs(active) {
     `<button class="${isActive ? "active" : ""}" onclick="go('${hash}')">${mi(icon, "sm")} ${label}</button>`;
   return `<div class="admin-tabs">
     ${tab("events", "celebration", "Events", "/admin", active === "events")}
-    ${tab("users", "badge", "ESNcards", "/admin/users", active === "users")}
+    ${tab("users", "group", "Users", "/admin/users", active === "users")}
     ${tab("insights", "monitoring", "Insights", "/admin/analytics", insightsActive)}
     ${isFinance() ? tab("finance", "payments", "Finance", "/admin/reimbursements", active === "finance") : ""}
     ${tab("merch", "storefront", "Shop", "/admin/merch", active === "merch")}
@@ -8936,10 +9191,28 @@ async function viewAdminSettings() {
       </div>
       ${isSuperUser ? `
       <div class="checkbox-row" style="margin:10px 0 0">
+        <input type="checkbox" id="cp-cash" ${cardPricing.cashEnabled ? "checked" : ""} />
+        <label for="cp-cash"><strong>Allow paying cash at the office</strong> <span class="badge ${cardPricing.cashEnabled ? "badge-pending" : "badge-esn"}">${cardPricing.cashEnabled ? "CASH ON" : "online only"}</span> ${hintIcon("OFF (default): the application form only offers online payment (card/Bancontact) and every text says so; unpaid applications still show under Users → ESNcard → Office, and the board can always register cash it did receive with the 'Paid?' button. ON: the form gets an 'I'll pay cash at the office' option again. Superadmin only.")}</label>
+      </div>
+      <div class="checkbox-row" style="margin:10px 0 0">
         <input type="checkbox" id="cp-avail" ${cardPricing.acceptAvailable ? "checked" : ""} />
         <label for="cp-avail"><strong>Also accept "available" cards as members</strong> <span class="badge ${cardPricing.acceptAvailable ? "badge-pending" : "badge-esn"}">${cardPricing.acceptAvailable ? "FALLBACK ON" : "active only"}</span> ${hintIcon("Standard: only a card that is ACTIVE on esncard.org gives member prices and unlocks the passport, codex and guide. Switch this ON as a fallback when students can't register their card on esncard.org or the esncard.org API is down: a card that is linked but still 'available' then counts as a member card too (prices, ESNcard-only events, perks - app and server alike). Switch it back OFF once esncard.org works again. Superadmin only.")}</label>
       </div>` : ""}
     </div>
+    ${isSuperUser ? `
+    <div class="form-card" style="margin-bottom:16px">
+      <strong>${mi("mail", "sm")} "Card ready" e-mail</strong> ${hintIcon("Sent automatically the moment a card number is assigned to a student. Placeholders are filled in per student. Empty fields use the built-in text. Sending only happens while confirmation e-mails are enabled under System. Superadmin only.")}
+      <div class="form-field" style="margin-top:12px"><label for="tpl-card-subject">Subject</label>
+        <input id="tpl-card-subject" maxlength="150" placeholder="Your ESNcard number is ready" /></div>
+      <div class="form-field"><label for="tpl-card-body">Message</label>
+        <textarea id="tpl-card-body" rows="9" placeholder="Hi {firstName},&#10;&#10;Good news - your ESNcard number is {cardNumber}.&#10;&#10;{activationNote}&#10;&#10;You can pick up the physical card during our office hours: {officeHours} (at the ESN office, never at events).&#10;&#10;Your card and barcode are already in the app under your profile.&#10;&#10;See you soon!&#10;The ESN Gent team"></textarea></div>
+      <p class="form-hint">Placeholders: <code>{firstName}</code> <code>{name}</code> <code>{cardNumber}</code> <code>{activationNote}</code> <code>{expires}</code> <code>{officeHours}</code> (office hours come from Organisation below). <strong>{activationNote}</strong> becomes a "register it on esncard.org" line for cards that aren't activated yet, or the validity date for active ones - keep it in your text.</p>
+      <div class="form-actions">
+        <button class="btn btn-sm btn-dark" id="tpl-card-save">Save template</button>
+        <button class="btn btn-sm btn-ghost btn-ink" id="tpl-card-test">${mi("send", "sm")} Send me a preview</button>
+        <span class="form-hint" id="tpl-card-hint">Loading…</span>
+      </div>
+    </div>` : ""}
 
     <h3 class="settings-group">${mi("apartment", "sm")} Organisation</h3>
 
@@ -9070,7 +9343,8 @@ async function viewAdminSettings() {
       <strong>${mi("bug_report", "sm")} Error log</strong> ${hintIcon("Every error users actually see, plus crashes and server-side sync/push failures - newest first, with timestamp, place and app version. Cleared entries are gone for good.")}
       <div class="form-actions" style="margin:10px 0">
         <button class="btn btn-sm btn-ghost btn-ink" id="err-refresh">${mi("refresh", "sm")} Refresh</button>
-        <button class="btn btn-sm btn-ghost" id="err-clear" style="color:var(--esn-magenta)">Clear shown entries</button>
+        <button class="btn btn-sm btn-ghost btn-ink" id="err-csv" title="Every entry (up to 2000), newest first - opens in Excel/Numbers/Sheets">${mi("download", "sm")} Download CSV</button>
+        <button class="btn btn-sm btn-ghost btn-danger" id="err-clear">Clear shown entries</button>
       </div>
       <div id="err-box"><p class="form-hint">Loading…</p></div>
     </div>
@@ -9192,7 +9466,7 @@ async function viewAdminSettings() {
               <label class="btn btn-sm btn-ghost btn-ink" style="cursor:pointer">${mi("image", "sm")} Picture<input type="file" accept="image/*" class="vh-input vn-img" /></label>
               <button class="btn btn-sm btn-green vn-save">Save</button>
               <button class="btn btn-sm btn-ghost btn-ink vn-stats">${mi("insights", "sm")} Stats</button>
-              <button class="btn btn-sm btn-ghost vn-del" style="color:var(--esn-magenta)" title="Delete venue">✕</button>
+              <button class="btn btn-sm btn-ghost vn-del btn-danger" title="Delete venue">✕</button>
             </div>
             <div class="form-actions" style="margin:8px 0 0;flex-wrap:wrap;gap:10px">
               <span class="form-hint">Default tags:</span>
@@ -9485,21 +9759,45 @@ async function viewAdminSettings() {
       shownErrors = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       box.innerHTML = shownErrors.length ? `
         <div class="table-wrap cards"><table>
-          <thead><tr><th>When</th><th>Where</th><th>Message</th><th>Page</th><th>Version</th></tr></thead>
+          <thead><tr><th>When</th><th>Where</th><th>Message</th><th>Who</th><th>Page</th><th>Version</th></tr></thead>
           <tbody>${shownErrors.map((r) => `
             <tr>
               <td data-l="When" style="white-space:nowrap">${r.ts ? `${fmtDate(r.ts)} ${fmtTime(r.ts)}` : "-"}</td>
-              <td data-l="Where"><span class="badge ${r.where?.startsWith("fn:") ? "badge-esn" : r.where === "crash" || r.where === "promise" ? "badge-soldout" : "badge-requested"}">${esc(r.where || "-")}</span></td>
-              <td class="card-main" style="max-width:320px;overflow-wrap:anywhere">${esc(r.message || "")}</td>
+              <td data-l="Where"><span class="badge ${r.where?.startsWith("fn:") ? "badge-esn" : r.where === "crash" || r.where === "promise" ? "badge-soldout" : "badge-requested"}">${esc(r.where || "-")}</span>${r.code ? `<br /><small class="form-hint">${esc(r.code)}</small>` : ""}</td>
+              <td class="card-main" style="max-width:320px;overflow-wrap:anywhere">${esc(r.message || "")}${r.detail ? `<details><summary class="form-hint" style="cursor:pointer">details</summary><small style="overflow-wrap:anywhere">${esc(r.detail)}</small></details>` : ""}</td>
+              <td data-l="Who" style="overflow-wrap:anywhere">${r.email ? `<a href="${r.uid ? `/admin/user-${esc(r.uid)}` : `mailto:${esc(r.email)}`}">${esc(r.email)}</a>` : r.uid ? `<a href="/admin/user-${esc(r.uid)}"><small>${esc(r.uid.slice(0, 8))}…</small></a>` : "-"}</td>
               <td>${esc(r.hash || "")}</td>
               <td>${esc(r.version || "")}</td>
             </tr>`).join("")}</tbody>
         </table></div>
-        <p class="form-hint" style="margin-top:6px">Newest 50. "fn:" entries come from the server (payments, calendar, push).</p>`
+        <p class="form-hint" style="margin-top:6px">Newest 50 - Download CSV for everything. "fn:" entries come from the server (payments, calendar, push). Students see a plain-language version of these; this is the raw text.</p>`
       : `<p class="form-hint">No errors logged - quiet is good.</p>`;
     } catch (err) { box.innerHTML = `<p class="form-hint">Could not load the log: ${esc(err.message)}</p>`; }
   };
   loadErrors();
+  // ---- Error log → CSV (v1.1.0): every entry, newest first ----
+  document.getElementById("err-csv")?.addEventListener("click", async (e) => {
+    btnBusy(e.target, "Preparing…");
+    try {
+      const snap = await getDocs(query(collection(db, "errorLog"), orderBy("ts", "desc"), limit(2000)));
+      const cell = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+      const iso = (ts) => { const d = toDate(ts); return d ? d.toLocaleString("sv-SE", { timeZone: TZ_BE }) : ""; };
+      const rows = [["when (Brussels)", "where", "code", "message", "who", "uid", "page", "version", "detail", "browser"]];
+      snap.docs.forEach((d) => {
+        const r = d.data();
+        rows.push([iso(r.ts), r.where, r.code, r.message, r.email, r.uid, r.hash, r.version, r.detail, r.ua]);
+      });
+      const csv = "\uFEFF" + rows.map((row) => row.map(cell).join(",")).join("\r\n");
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `esn-gent-error-log-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+      toast(`${snap.size} entr${snap.size === 1 ? "y" : "ies"} exported.`, "success");
+    } catch (err) { toast("Export failed: " + err.message, "error"); }
+    btnIdle(e.target);
+  });
   // ---- Site banner (v0.131) ----
   (async () => {
     try {
@@ -9516,6 +9814,43 @@ async function viewAdminSettings() {
       }
     } catch { document.getElementById("bn-hint").textContent = ""; }
   })();
+  // ---- "Card ready" e-mail template (moved here from the ESNcard tab, v1.3.0) ----
+  if (document.getElementById("tpl-card-save")) {
+    (async () => {
+      try {
+        const ts = await getDoc(doc(db, "settings", "emailTemplates"));
+        const t = ts.exists() && ts.data().esncardReady ? ts.data().esncardReady : {};
+        document.getElementById("tpl-card-subject").value = t.subject || "";
+        document.getElementById("tpl-card-body").value = t.body || "";
+        document.getElementById("tpl-card-hint").textContent = t.subject || t.body ? "Custom text in use." : "Built-in text in use - edit to customise.";
+      } catch { document.getElementById("tpl-card-hint").textContent = ""; }
+    })();
+    document.getElementById("tpl-card-save").addEventListener("click", async (e) => {
+      e.target.disabled = true;
+      try {
+        await setDoc(doc(db, "settings", "emailTemplates"), {
+          esncardReady: {
+            subject: document.getElementById("tpl-card-subject").value.trim(),
+            body: document.getElementById("tpl-card-body").value.trim(),
+          },
+          updatedBy: currentUser.uid, updatedAt: serverTimestamp(),
+        }, { merge: true });
+        toast("Template saved - used for the next card-ready mails.", "success");
+        document.getElementById("tpl-card-hint").textContent = "Custom text in use.";
+      } catch (err) { toast("Save failed: " + err.message, "error"); }
+      e.target.disabled = false;
+    });
+    document.getElementById("tpl-card-test").addEventListener("click", async (e) => {
+      const btn = e.currentTarget;
+      btnBusy(btn, "Sending…");
+      try {
+        const fn = httpsCallable(functions, "sendTestEmail");
+        const res = await fn({ template: "esncardReady" });
+        toast(`Preview sent to ${res.data.to} with sample data - it uses the SAVED template, so save first.`, "success");
+      } catch (err) { toast(err.message || "Preview failed", "error"); }
+      btnIdle(btn);
+    });
+  }
   document.getElementById("bn-save")?.addEventListener("click", async (e) => {
     const text = document.getElementById("bn-text").value.trim();
     const enabled = document.getElementById("bn-enabled").checked;
@@ -9560,13 +9895,15 @@ async function viewAdminSettings() {
       // finance user (who doesn't see it) saves prices.
       const availEl = document.getElementById("cp-avail");
       const acceptAvailable = availEl ? availEl.checked : cardPricing.acceptAvailable === true;
+      const cashEl = document.getElementById("cp-cash");
+      const cashEnabled = cashEl ? cashEl.checked : cardPricing.cashEnabled === true;
       await setDoc(doc(db, "settings", "esncard"), {
-        priceStudent: s, priceVolunteer: v, validityMonths: months, proofRequired, acceptAvailable,
+        priceStudent: s, priceVolunteer: v, validityMonths: months, proofRequired, acceptAvailable, cashEnabled,
         updatedBy: currentUser.uid, updatedByName: currentUser.displayName || "",
         updatedAt: serverTimestamp(),
       });
-      cardPricing.student = s; cardPricing.volunteer = v; cardPricing.validityMonths = months; cardPricing.proofRequired = proofRequired; cardPricing.acceptAvailable = acceptAvailable;
-      toast(`ESNcard settings saved: ${fmtMoney(s)} student · ${fmtMoney(v)} volunteer/alumni · valid ${months} months · proof ${proofRequired ? "required" : "OFF (welcome-week mode)"}${availEl ? ` · ${acceptAvailable ? "FALLBACK: available cards count as members (server picks it up within a minute)" : "active cards only"}` : ""}.`, acceptAvailable ? "warn" : "success");
+      cardPricing.student = s; cardPricing.volunteer = v; cardPricing.validityMonths = months; cardPricing.proofRequired = proofRequired; cardPricing.acceptAvailable = acceptAvailable; cardPricing.cashEnabled = cashEnabled;
+      toast(`ESNcard settings saved: ${fmtMoney(s)} student · ${fmtMoney(v)} volunteer/alumni · valid ${months} months · proof ${proofRequired ? "required" : "OFF (welcome-week mode)"}${cashEl ? ` · cash at the office ${cashEnabled ? "ON" : "OFF (online only)"}` : ""}${availEl ? ` · ${acceptAvailable ? "FALLBACK: available cards count as members (server picks it up within a minute)" : "active cards only"}` : ""}.`, acceptAvailable ? "warn" : "success");
     } catch (err) { toast("Save failed: " + err.message, "error"); }
     e.target.disabled = false;
   });
@@ -9591,7 +9928,7 @@ async function viewAdminSettings() {
               ${DSA_TYPES.map((v) => `<option value="${v}" ${t.dsaType === v ? "selected" : ""}>${v}</option>`).join("")}
             </select>`}
             <button class="btn btn-sm btn-green tag-save">Save</button>
-            <button class="btn btn-sm btn-ghost tag-del" style="color:var(--esn-magenta)" title="Delete tag">✕</button>
+            <button class="btn btn-sm btn-ghost tag-del btn-danger" title="Delete tag">✕</button>
           </div>`).join("")}
         <div class="form-actions" style="margin:0;align-items:center">
           <input type="color" id="tag-new-color" value="#EC008C" style="width:44px;height:32px;padding:2px;border:1px solid var(--border);border-radius:8px;background:var(--card)" />
@@ -9760,7 +10097,7 @@ async function viewAdminTeam() {
           <button class="btn btn-sm btn-dark t-save" data-uid="${t.id}">Save</button>
           <span class="form-hint">You can't change your own role</span>` : `
           <button class="btn btn-sm btn-dark t-save" data-uid="${t.id}">Save</button>
-          <button class="btn btn-sm btn-ghost t-remove" data-uid="${t.id}" style="color:var(--esn-magenta)">Remove</button>`}
+          <button class="btn btn-sm btn-ghost btn-danger t-remove" data-uid="${t.id}">Remove</button>`}
       </td>
     </tr>`;
   }).join("");
@@ -10048,7 +10385,7 @@ async function viewAdminMerch(yearSel = ayStartYear()) {
             <td style="white-space:nowrap" class="card-actions">
               ${o.status === "requested" ? `<button class="btn btn-sm btn-green m-order-paid" data-oid="${o.id}">Mark paid</button>` : ""}
               ${o.status === "paid" && !o.pickedUpAt ? `<button class="btn btn-sm btn-dark m-order-pickup" data-oid="${o.id}">Picked up ✓</button>` : ""}
-              <button class="btn btn-sm btn-ghost m-order-del" data-oid="${o.id}" title="Remove order" aria-label="Remove order" style="color:var(--esn-magenta)">✕</button>
+              <button class="btn btn-sm btn-ghost m-order-del btn-danger" data-oid="${o.id}" title="Remove order" aria-label="Remove order">✕</button>
             </td>
           </tr>`).join("")}</tbody>
       </table></div>`
@@ -10140,7 +10477,7 @@ async function viewAdminMerchForm(productId) {
           <div class="img-upload-row">
             <img id="m-image-preview" class="img-preview ${p?.image ? "" : "hidden"}" src="${esc(p?.image || "")}" alt="" />
             <input id="m-image-file" type="file" accept="image/*" />
-            <button type="button" id="m-image-remove" class="btn btn-ghost btn-sm ${p?.image ? "" : "hidden"}" style="color:var(--esn-magenta)">Remove photo</button>
+            <button type="button" id="m-image-remove" class="btn btn-ghost btn-sm ${p?.image ?  btn-danger"" : "hidden"}">Remove photo</button>
           </div>
         </div>
         <div class="form-field">
@@ -10153,8 +10490,8 @@ async function viewAdminMerchForm(productId) {
       </div>
       <div class="form-actions">
         <button type="submit" class="btn btn-green">${p ? "Save changes" : "Create product"}</button>
-        <a href="/admin/merch" class="btn btn-ghost btn-ink">Cancel</a>
-        ${p ? `<button type="button" id="m-delete" class="btn btn-ghost" style="margin-left:auto;color:var(--esn-magenta);border-color:var(--esn-magenta)">Delete product</button>` : ""}
+        <a href="/admin/merch" class="btn btn-ghost btn-danger">Cancel</a>
+        ${p ? `<button type="button" id="m-delete" class="btn btn-ghost btn-danger" style="margin-left:auto;color:var(--esn-magenta);border-color:var(--esn-magenta)">Delete product</button>` : ""}
       </div>
     </form>
   `;
@@ -10184,7 +10521,7 @@ async function viewAdminMerchForm(productId) {
         <input class="opt-price" type="number" min="0" step="0.01" placeholder="€" title="Price (blank = product price)" value="${v.price != null ? (v.price / 100).toFixed(2) : ""}" />
         <input class="opt-price-esn" type="number" min="0" step="0.01" placeholder="Member €" title="ESNcard price" value="${v.priceEsn != null ? (v.priceEsn / 100).toFixed(2) : ""}" />
         <input class="opt-cap" type="number" min="1" placeholder="stock" title="Stock" value="${v.stock || ""}" />
-        <button type="button" class="btn btn-sm btn-ghost opt-del" title="Remove" style="color:var(--esn-magenta)">✕</button>
+        <button type="button" class="btn btn-sm btn-ghost opt-del btn-danger" title="Remove">✕</button>
       </div>`).join("");
     document.querySelectorAll("#m-variants .opt-del").forEach((b) => {
       b.onclick = () => {
@@ -10398,6 +10735,8 @@ async function viewAdminMembers(yearSel = ayStartYear()) {
 
   const activeCards = applications.filter((a) => a.status === "active");
   const pickedUp = activeCards.filter((a) => a.pickedUpAt).length;
+  const openApps = applications.filter((a) => a.status === "applied" || a.status === "paid").length;
+  const last7 = applications.filter((a) => { const d = toDate(a.createdAt); return d && Date.now() - d.getTime() < 7 * 24 * 3600 * 1000; }).length;
   const countBy = (list, keyFn) => {
     const m = {};
     list.forEach((x) => { const k = (keyFn(x) || "").trim(); if (k) m[k] = (m[k] || 0) + 1; });
@@ -10434,10 +10773,18 @@ async function viewAdminMembers(yearSel = ayStartYear()) {
     </div>
     <div class="stat-row">
       <div class="stat-card" style="--accent:#00AEEF"><div class="num">${users.length}</div><div class="lbl">Active users</div></div>
+      <div class="stat-card" style="--accent:#2E3192"><div class="num">${applications.length}</div><div class="lbl">Applications</div></div>
+      <div class="stat-card" style="--accent:#F47B20"><div class="num">${openApps}</div><div class="lbl">Open applications</div></div>
+      <div class="stat-card" style="--accent:#EC008C"><div class="num">${last7}</div><div class="lbl">Applied last 7 days</div></div>
       <div class="stat-card" style="--accent:#7AC143"><div class="num">${activeCards.length}</div><div class="lbl">Active ESNcards</div></div>
       <div class="stat-card" style="--accent:#F47B20"><div class="num">${activeCards.length - pickedUp}</div><div class="lbl">Awaiting pickup</div></div>
-      <div class="stat-card" style="--accent:#EC008C"><div class="num">${natCounts.length}</div><div class="lbl">Nationalities</div></div>
+      <div class="stat-card" style="--accent:#9a9cb5"><div class="num">${natCounts.length}</div><div class="lbl">Nationalities</div></div>
     </div>
+
+    <details class="form-card apps-overview" open style="margin:0 0 22px">
+      <summary><strong>${mi("donut_small", "sm")} ESNcard applications</strong> <span class="form-hint">- who is applying in ${ayLabel(yearSel)} (${applications.length} application${applications.length === 1 ? "" : "s"}) · handle them under <a href="/admin/users">Users → ESNcard</a></span></summary>
+      <div class="donut-grid">${applicationDonutsHtml(applications)}</div>
+    </details>
     ${natCounts.length ? `<p class="form-hint" style="margin:-8px 0 18px">Top nationalities (users active in ${ayLabel(yearSel)}): ${natCounts.slice(0, 5).map(([n, c]) => `${esc(n)} (${c})`).join(" · ")}</p>` : ""}
 
     <div class="form-card" id="nat-map-card" style="position:relative;margin-bottom:22px">
@@ -10462,7 +10809,7 @@ async function viewAdminMembers(yearSel = ayStartYear()) {
         ${countTable(byCountry, "Nationality", activeCards.length)}
       </div>
     </div>
-    <p class="form-hint" style="margin-top:14px">Counts come from <strong>active</strong> ESNcards (assigned card numbers). The pipeline itself lives under <a href="/admin/users">Users &amp; ESNcards</a>.</p>
+    <p class="form-hint" style="margin-top:14px">Counts come from <strong>active</strong> ESNcards (assigned card numbers). The pipeline itself lives under <a href="/admin/users">Users → ESNcard</a>.</p>
   `;
 
   renderNationalityMap(users, (name) => {
@@ -10473,7 +10820,7 @@ async function viewAdminMembers(yearSel = ayStartYear()) {
       <div class="form-card" style="margin-bottom:22px">
         <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
           <strong>${esc(name)} - ${list.length} member${list.length === 1 ? "" : "s"}</strong>
-          <button class="btn btn-sm btn-ghost" id="cm-close" style="color:var(--esn-magenta)">✕ close</button>
+          <button class="btn btn-sm btn-ghost btn-danger" id="cm-close">✕ close</button>
         </div>
         <div class="table-wrap" style="margin-top:10px"><table>
           <thead><tr><th>Name</th><th>Email</th><th>ESNcard</th></tr></thead>
@@ -10520,12 +10867,140 @@ function yearPickerHtml(id, selected = ayStartYear(), extra = "") {
   </select>`;
 }
 
-async function viewAdminUsers(yearSel = ayStartYear(), allUsers = false) {
+// Institution colour chips (v1.3.0) - the same colours the section uses on
+// its website tags, matched on a keyword so renamed list entries still map.
+const INSTITUTION_COLORS = [
+  [/howest/i, "#5B2C8E", "#fff"],
+  [/ghent university|ugent|universiteit gent/i, "#1E4FA3", "#fff"],
+  [/odisee/i, "#A11C1C", "#fff"],
+  [/artevelde/i, "#3B7A4E", "#fff"],
+  [/hogent/i, "#3A3A3A", "#fff"],
+  [/sint-?lucas/i, "#F5E6A3", "#3a3000"],
+  [/luca/i, "#7A4A0B", "#fff"],
+  [/ku ?leuven/i, "#2D5A6B", "#fff"],
+];
+function instChip(name, other) {
+  const n = String(name || "").trim();
+  if (!n) return `<span class="form-hint">-</span>`;
+  const hit = INSTITUTION_COLORS.find(([re]) => re.test(n));
+  const [bg, fg] = hit ? [hit[1], hit[2]] : ["#E0E2EA", "#2b2d42"];
+  const label = /^other\b/i.test(n) && other ? `Other · ${other}` : n.replace(" University of Applied Sciences", "").replace(" (Ghent campus)", "");
+  return `<span class="inst-chip" style="background:${bg};color:${fg}" title="${esc(n)}${other ? ` (${esc(other)})` : ""}">${esc(label)}</span>`;
+}
+function withOtherText(v, other) { return other ? `${v || "Other"} (${other})` : (v || ""); }
+
+// Every field of an ESNcard submission as a definition grid (v1.3.0) -
+// used by the work queue (Full submission) and the user page (history).
+function applicationFieldsHtml(x) {
+  const row = (k, v) => v ? `<div class="sub-row"><span class="sub-k">${k}</span><span class="sub-v">${v}</span></div>` : "";
+  const price = x.price ?? cardPricing.student;
+  return `<div class="sub-grid">
+    ${row("Name", esc(`${x.firstName || ""} ${x.lastName || ""}`.trim()))}
+    ${row("E-mail", x.email ? `<a href="mailto:${esc(x.email)}">${esc(x.email)}</a>` : "")}
+    ${row("Date of birth", esc(x.birthday || ""))}
+    ${row("Nationality", esc(x.nationality || ""))}
+    ${row("Phone", x.phone ? `<a href="tel:${esc(x.phone)}">${esc(x.phone)}</a>` : "")}
+    ${row("Institution in Ghent", esc(withOtherText(x.hostInstitution, x.hostInstitutionOther)))}
+    ${row("Type of stay", esc(withOtherText(x.stayType, x.stayTypeOther)))}
+    ${row("Stay period", esc(stayPeriodText(x)))}
+    ${row("Home university", esc([x.homeUniversity, x.homeCity, x.homeCountry].filter(Boolean).join(", ")))}
+    ${row("Field of studies", esc(withOtherText(x.fieldOfStudies, x.fieldOfStudiesOther)))}
+    ${row("Found ESN via", esc((x.discovery || []).map((d) => /^other\b/i.test(d) && x.discoveryOther ? `Other (${x.discoveryOther})` : d).join(", ")))}
+    ${row("Event ideas", esc(x.ideas || ""))}
+    ${row("Proof", x.hasProof === false ? "none attached" : x.hasProof ? "attached" : "")}
+    ${row("Price", price === 0 ? "free (team)" : fmtMoney(price))}
+    ${row("Payment", x.status === "applied" ? "not yet" : x.paidOnline ? `online${x.paidAt ? " · " + fmtDate(x.paidAt) : ""}` : x.paidAt ? `cash · ${fmtDate(x.paidAt)}` : "")}
+    ${row("Applied", x.createdAt ? `${fmtDate(x.createdAt)} ${fmtTime(x.createdAt)}` : "")}
+    ${row("Last edited", x.updatedAt && x.createdAt && toDate(x.updatedAt)?.getTime() !== toDate(x.createdAt)?.getTime() ? `${fmtDate(x.updatedAt)} ${fmtTime(x.updatedAt)}` : "")}
+    ${row("Card", x.cardNumber ? `<code>${esc(x.cardNumber)}</code>${x.expiresAt ? ` · until ${fmtDate(x.expiresAt)}` : ""}` : "")}
+    ${row("Picked up", x.pickedUpAt ? `${fmtDate(x.pickedUpAt)} ${fmtTime(x.pickedUpAt)}` : "")}
+    ${row("Rejected", x.declineReason ? esc(x.declineReason) : "")}
+  </div>`;
+}
+
+// Donut overview of a set of applications (v1.2.0, moved to Insights in v1.3.0).
+function applicationDonutsHtml(applications) {
+  if (!applications.length) return `<p class="form-hint">Charts appear with the first application.</p>`;
+  const count = (fn) => {
+    const m = new Map();
+    for (const x of applications) { for (const k of [].concat(fn(x) ?? [])) { const key = String(k || "").trim() || "(blank)"; m.set(key, (m.get(key) || 0) + 1); } }
+    return [...m.entries()].map(([label, value]) => ({ label, value }));
+  };
+  const STATUS_LABEL = { applied: "Unpaid", paid: "Paid, card to assign", active: "Card active", rejected: "Rejected" };
+  const MONTHS_S = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const monthLabel = (ym) => { const [y, m] = String(ym || "").split("-"); return m ? `${MONTHS_S[+m - 1]} ${y}` : "(blank)"; };
+  return [
+    donutChart("Status", count((x) => STATUS_LABEL[x.status] || x.status), { order: Object.values(STATUS_LABEL) }),
+    donutChart("Institution in Ghent", count((x) => x.hostInstitution)),
+    donutChart("Type of stay", count((x) => x.stayType)),
+    donutChart("Nationality", count((x) => x.nationality)),
+    donutChart("Arriving", count((x) => monthLabel(x.stayFrom)), { sortKey: true }),
+    donutChart("Leaving", count((x) => x.stayUntilUnknown || !x.stayUntil ? "Not sure yet" : monthLabel(x.stayUntil)), { sortKey: true }),
+    donutChart("How they found ESN", count((x) => x.discovery)),
+    donutChart("Home country", count((x) => x.homeCountry)),
+    donutChart("Paid how", count((x) => x.status === "applied" ? "Not yet" : x.status === "rejected" ? "Rejected" : x.paidOnline ? "Online" : x.price === 0 ? "Free (team)" : "Cash")),
+  ].join("");
+}
+
+// Stay period as text: "Sep 2026 - Jan 2027" / "Sep 2026 - (not sure yet)".
+function stayPeriodText(x) {
+  const M = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const f = (ym) => { const [y, m] = String(ym || "").split("-"); return m ? `${M[+m - 1]} ${y}` : ""; };
+  if (!x.stayFrom) return "";
+  return `${f(x.stayFrom)} - ${x.stayUntilUnknown || !x.stayUntil ? "(not sure yet)" : f(x.stayUntil)}`;
+}
+
+// Donut chart (v1.2.0) - plain SVG, no library. Max 5 named slices, the
+// tail folds into "Other"; legend doubles as the table (count + share).
+// Palette validated for colour-vision deficiency on light AND dark surfaces.
+const DONUT_COLORS = ["#0A9BD8", "#D6007F", "#55A028", "#6B6FD9", "#E06A10"];
+const DONUT_OTHER = "#9AA0B8";
+function donutChart(title, rows, opts = {}) {
+  const total = rows.reduce((n, r) => n + r.value, 0);
+  if (!total) return `<div class="donut"><h4>${esc(title)}</h4><p class="form-hint">No data yet.</p></div>`;
+  let data = rows.filter((r) => r.value > 0);
+  if (opts.order) data.sort((a, b) => opts.order.indexOf(a.label) - opts.order.indexOf(b.label));
+  else if (opts.sortKey) data.sort((a, b) => { const p = (l) => { const [m, y] = l.split(" "); const i = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"].indexOf(m); return i < 0 ? 9e9 : (+y) * 12 + i; }; return p(a.label) - p(b.label); });
+  else data.sort((a, b) => b.value - a.value);
+  if (data.length > 6) {
+    const head = data.slice(0, 5);
+    const tail = data.slice(5).reduce((n, r) => n + r.value, 0);
+    data = [...head, { label: `Other (${data.length - 5})`, value: tail, other: true }];
+  }
+  const R = 42, C = 2 * Math.PI * R, GAP = 2;
+  let offset = 0;
+  const arcs = data.map((r, i) => {
+    const len = (r.value / total) * C;
+    const color = r.other ? DONUT_OTHER : DONUT_COLORS[i % DONUT_COLORS.length];
+    const seg = `<circle r="${R}" cx="50" cy="50" fill="none" stroke="${color}" stroke-width="14"
+      stroke-dasharray="${Math.max(0, len - GAP).toFixed(2)} ${(C - Math.max(0, len - GAP)).toFixed(2)}" stroke-dashoffset="${(-offset).toFixed(2)}"
+      transform="rotate(-90 50 50)"><title>${esc(r.label)}: ${r.value} (${Math.round((r.value / total) * 100)}%)</title></circle>`;
+    offset += len;
+    return seg;
+  }).join("");
+  const legend = data.map((r, i) => `
+    <li><span class="sw" style="background:${r.other ? DONUT_OTHER : DONUT_COLORS[i % DONUT_COLORS.length]}"></span>
+      <span class="lb">${esc(r.label)}</span><span class="ct">${r.value}</span><span class="pc">${Math.round((r.value / total) * 100)}%</span></li>`).join("");
+  return `<div class="donut">
+    <h4>${esc(title)}</h4>
+    <div class="donut-body">
+      <svg viewBox="0 0 100 100" role="img" aria-label="${esc(title)}: ${data.map((r) => `${r.label} ${r.value}`).join(", ")}">
+        <circle r="${R}" cx="50" cy="50" fill="none" stroke="var(--border)" stroke-width="14" />
+        ${arcs}
+        <text x="50" y="47" text-anchor="middle" class="donut-num">${total}</text>
+        <text x="50" y="60" text-anchor="middle" class="donut-cap">total</text>
+      </svg>
+      <ul class="donut-legend">${legend}</ul>
+    </div>
+  </div>`;
+}
+
+async function viewAdminUsers(yearSel = ayStartYear(), allUsers = false, tab = "esncard") {
   setLoading();
   const yr = ayRange(yearSel);
-  let users, applications;
+  let users, applications, team;
   try {
-    [users, applications] = await Promise.all([
+    [users, applications, team] = await Promise.all([
       // Users: by default only accounts ACTIVE this academic year - the
       // full list (every account ever) loads on demand only.
       getDocs(allUsers
@@ -10537,42 +11012,60 @@ async function viewAdminUsers(yearSel = ayStartYear(), allUsers = false) {
       getDocs(query(collection(db, "esncardApplications"),
         where("createdAt", ">=", yr.from), where("createdAt", "<", yr.to)))
         .then((s) => s.docs.map((d) => ({ id: d.id, ...d.data() }))),
+      // Team roles (v1.3.0): board / volunteers / AB get a flag in the user list.
+      getDocs(collection(db, "admins")).then((s) => s.docs.map((d) => ({ id: d.id, ...d.data() }))).catch(() => []),
     ]);
   } catch (e) { $app.innerHTML = errorState(e.message); return; }
 
   users.sort((a, b) => (a.displayName || "").localeCompare(b.displayName || ""));
   applications.sort((a, b) => (toDate(b.createdAt)?.getTime() || 0) - (toDate(a.createdAt)?.getTime() || 0));
-
-  // Board-editable "card ready" mail template (sent on assign & activate)
-  let tplCard = {};
-  try {
-    const ts = await getDoc(doc(db, "settings", "emailTemplates"));
-    if (ts.exists() && ts.data().esncardReady) tplCard = ts.data().esncardReady;
-  } catch { /* built-in defaults shown as placeholders */ }
-  const TPL_CARD_DEFAULT = {
-    subject: "Your ESNcard number is ready",
-    body: "Hi {firstName},\n\nGood news - your ESNcard number is {cardNumber}.\n\n{activationNote}\n\nYou can pick up the physical card during our office hours: {officeHours} (at the ESN office, never at events).\n\nYour card and barcode are already in the app under your profile.\n\nSee you soon!\nThe ESN Gent team",
-  };
+  const roleByUid = Object.fromEntries(team.map((t) => [t.id, { role: t.role || "superadmin", fn: t.boardFunction || "" }]));
+  users.forEach((u) => { u._role = roleByUid[u.id]?.role || ""; u._fn = roleByUid[u.id]?.fn || ""; });
 
   const PAGE = 100;
   let usersShown = PAGE;
   let appsShown = PAGE;
   let natFilter = null;
-  const userFilter = { q: "", chip: "all" };  // all | active | available | expired | linked | none
-  // Office-hours priority: land on "To assign" when there are paid apps waiting.
-  const appFilter = { q: "", chip: applications.some((x) => x.status === "paid") ? "assign" : "open" };
+  // Users sub-tab: card-status chip + dropdown filters (v1.3.0)
+  const userFilter = { q: "", chip: "all", inst: "", nat: "", role: "" };  // chip: all | active | available | expired | linked | none | team | alumni
+  // ESNcard sub-tab: office-hours work queue - lands on everything that
+  // still needs a hand (unpaid, to assign, to pick up).
+  const appFilter = { q: "", chip: "assign", inst: "", nat: "", stay: "", pay: "", proof: "", arrive: "" };
+  const uniq = (list, fn) => {
+    const m = new Map();
+    list.forEach((x) => { const k = String(fn(x) || "").trim(); if (k) m.set(k, (m.get(k) || 0) + 1); });
+    return [...m.entries()].sort((a, b) => b[1] - a[1]);
+  };
+  const selectHtml = (id, label, entries, current, fmt = (v) => v) => `
+    <label class="fsel"><span>${label}</span><select id="${id}">
+      <option value="">all</option>
+      ${entries.map(([v, n]) => `<option value="${esc(v)}" ${current === v ? "selected" : ""}>${esc(fmt(v))} (${n})</option>`).join("")}
+    </select></label>`;
+  const MONTHS_S = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const ymLabel = (ym) => { const [y, m] = String(ym || "").split("-"); return m ? `${MONTHS_S[+m - 1]} ${y}` : ym; };
+  const ROLE_LABEL = { superadmin: "Superadmin", board: "Board", finance: "Board (finance)", volunteer: "Volunteer", advisory: "Advisory board", alumnicoord: "Alumni coordinator" };
 
+
+  const usersSubnav = (active) => `<div class="filter-chips" style="margin:-10px 0 18px">
+    <button class="chip ${active === "esncard" ? "active" : ""}" onclick="go('/admin/users')">${mi("badge", "sm")} ESNcard</button>
+    <button class="chip ${active === "users" ? "active" : ""}" onclick="go('/admin/accounts')">${mi("group", "sm")} Users</button>
+  </div>`;
 
   $app.innerHTML = `
-    <h2 class="section-title">Users &amp; ESNcards</h2>
+    <h2 class="section-title">Users</h2>
     ${adminTabs("users")}
-    <div id="au-stats"></div>
-    <p class="form-hint" style="margin:-8px 0 16px">This tab is the office-hours work queue: register cash payments, <strong>assign card numbers</strong>, tick pickups. Stats live under <a href="/admin/analytics">Insights</a>; prices &amp; tags under Settings.</p>
-
-    <h3 class="section-title sm">ESNcard applications</h3>
-    <div class="filter-bar">
-      <input id="apps-q" type="search" placeholder="Search name, email, institution, card number…" />
-      <div class="filter-chips" id="apps-chips"></div>
+    ${usersSubnav(tab)}
+    ${tab === "esncard" ? `
+    <p class="form-hint" style="margin:-8px 0 14px">The office-hours work queue: assign card numbers, tick pickups, reject what doesn't fit. Numbers &amp; charts live under <a href="/admin/members">Insights → Members</a>; prices, lists and the card-ready e-mail under Settings.</p>
+    <div class="queue-sticky">
+      <div class="filter-bar">
+        <input id="apps-q" type="search" placeholder="Search name, e-mail, institution, card number…" autocomplete="off" />
+        <div class="filter-chips" id="apps-chips"></div>
+      </div>
+      <details class="form-optional" id="apps-more-filters">
+        <summary class="form-hint" style="cursor:pointer">More filters</summary>
+        <div class="filter-selects" id="apps-selects" style="margin-top:8px"></div>
+      </details>
     </div>
     <div class="form-actions" style="margin:0 0 10px">
       <button class="btn btn-dark btn-sm" id="btn-apps-csv">Export applications CSV</button>
@@ -10580,26 +11073,14 @@ async function viewAdminUsers(yearSel = ayStartYear(), allUsers = false) {
       <span class="form-hint" style="margin-left:auto">Archive: ${yearPickerHtml("apps-year", yearSel)}</span>
     </div>
     <div id="apps-box"></div>
-    <p class="form-hint" style="margin-bottom:14px">The sequence is fixed: <strong>1&nbsp;Payment</strong> (online flips to paid automatically; cash → mark received: currently ${fmtMoney(cardPricing.student)} student · ${fmtMoney(cardPricing.volunteer)} volunteer/alumni · free for board/AB) → <strong>2&nbsp;Assign &amp; activate</strong> the physical card's number (checked for typos and duplicates; verifies the member, starts the ${cardPricing.validityMonths}-month validity; the student automatically gets the "card ready" e-mail below) → <strong>3&nbsp;Picked up</strong>, only tickable once a number is assigned - tick it the moment the card is handed over at the office. <strong>Decline</strong> asks for a reason the applicant sees - online payments are refunded automatically via Stripe.</p>
-
-    <details class="form-card" style="margin-bottom:20px">
-      <summary style="cursor:pointer"><strong>${mi("mail", "sm")} "Card ready" e-mail</strong> <span class="form-hint">- sent automatically on assign &amp; activate · click to edit the text</span></summary>
-      <div class="form-field" style="margin-top:12px"><label for="tpl-card-subject">Subject</label>
-        <input id="tpl-card-subject" maxlength="150" value="${esc(tplCard.subject || "")}" placeholder="${esc(TPL_CARD_DEFAULT.subject)}" /></div>
-      <div class="form-field"><label for="tpl-card-body">Message</label>
-        <textarea id="tpl-card-body" rows="9" placeholder="${esc(TPL_CARD_DEFAULT.body)}">${esc(tplCard.body || "")}</textarea></div>
-      <p class="form-hint">Placeholders filled in per student: <code>{firstName}</code> <code>{name}</code> <code>{cardNumber}</code> <code>{activationNote}</code> <code>{expires}</code> <code>{officeHours}</code> (office hours come from Settings → Organisation). <strong>{activationNote}</strong> becomes a "register it on esncard.org" line for cards that aren't activated yet, or the validity date for active ones - keep it in your text. Empty fields use the built-in text. Sending only happens while confirmation e-mails are enabled in Admin → Settings → System.</p>
-      <div class="form-actions">
-        <button class="btn btn-sm btn-dark" id="tpl-card-save">Save template</button>
-        <button class="btn btn-sm btn-ghost btn-ink" id="tpl-card-test">${mi("send", "sm")} Send me a preview</button>
-      </div>
-    </details>
-
-    <h3 class="section-title sm">All users</h3>
+    <p class="form-hint" style="margin-bottom:14px"><strong>To assign</strong> lists everyone who has paid (oldest payment first): type the number on the physical card, press Enter - the app checks it on esncard.org (typos, duplicates, blocked or already-active cards), links it and e-mails the student. <strong>Office - unpaid</strong> is for people paying at the desk${cashAllowed() ? "" : " (cash is switched off in Settings, so this stays small)"}: click <strong>Paid?</strong>, confirm you received the money (${fmtMoney(cardPricing.student)} student · ${fmtMoney(cardPricing.volunteer)} volunteer/alumni), and the card field appears - they can still pay online from their account in the meantime. <strong>To pick up</strong>: one click on <strong>Handed over</strong> when you give them the card. <strong>Reject…</strong> asks for a reason the student sees and can act on; online payments are refunded automatically. <em>Details</em> under a name shows the whole submission.</p>
+    ` : `
+    <p class="form-hint" style="margin:-8px 0 14px">Every account${allUsers ? "" : " that signed in since 1 July"}. Team members and alumni carry a flag; institutions are colour-coded. Open a name for the full profile, card history and previous submissions.</p>
     <div class="filter-bar">
-      <input id="users-q" type="search" placeholder="Search name, email or card code…" />
+      <input id="users-q" type="search" placeholder="Search name, e-mail, card code…" />
       <div class="filter-chips" id="users-chips"></div>
     </div>
+    <div class="filter-selects" id="users-selects"></div>
     <div class="form-actions" style="margin:0 0 12px">
       <button class="btn btn-dark btn-sm" id="btn-users-csv">Export CSV</button>
       <span class="form-hint" id="users-count"></span>
@@ -10608,135 +11089,161 @@ async function viewAdminUsers(yearSel = ayStartYear(), allUsers = false) {
         : `Active since 1 July · <a href="#" id="users-all">load all accounts</a>`}</span>
     </div>
     <div id="users-box"></div>
+    `}
   `;
 
-  // ---------- "card ready" template (board-editable) ----------
-  document.getElementById("tpl-card-save")?.addEventListener("click", async (e) => {
-    e.target.disabled = true;
-    try {
-      await setDoc(doc(db, "settings", "emailTemplates"), {
-        esncardReady: {
-          subject: document.getElementById("tpl-card-subject").value.trim(),
-          body: document.getElementById("tpl-card-body").value.trim(),
-        },
-        updatedBy: currentUser.uid, updatedAt: serverTimestamp(),
-      }, { merge: true });
-      toast("Template saved - used for the next card-ready mails.", "success");
-    } catch (err) { toast("Save failed: " + err.message, "error"); }
-    e.target.disabled = false;
-  });
-  document.getElementById("tpl-card-test")?.addEventListener("click", async (e) => {
-    const btn = e.currentTarget;
-    btn.disabled = true;
-    const old = btn.innerHTML;
-    btn.innerHTML = `${mi("hourglass_top", "sm")} Sending…`;
-    try {
-      const fn = httpsCallable(functions, "sendTestEmail");
-      const res = await fn({ template: "esncardReady" });
-      toast(`Preview sent to ${res.data.to} with sample data - it uses the SAVED template, so save first.`, "success");
-    } catch (err) { toast(err.message || "Preview failed", "error"); }
-    btn.disabled = false;
-    btn.innerHTML = old;
-  });
-
-  // ---------- stats (recomputed after pipeline actions) ----------
-  const renderStats = () => {
-    const openApps = applications.filter((x) => x.status === "applied" || x.status === "paid").length;
-    const last7 = applications.filter((x) => {
-      const d = toDate(x.createdAt);
-      return d && Date.now() - d.getTime() < 7 * 24 * 3600 * 1000;
-    }).length;
-    const verifiedCount = users.filter((u) => u.esncardVerified).length;
-    const active30 = users.filter((u) => {
-      const d = toDate(u.lastLogin);
-      return d && Date.now() - d.getTime() < 30 * 24 * 3600 * 1000;
-    }).length;
-    document.getElementById("au-stats").innerHTML = `
-      <div class="stat-row">
-        <div class="stat-card" style="--accent:#00AEEF"><div class="num">${users.length}</div><div class="lbl">Users</div></div>
-        <div class="stat-card" style="--accent:#7AC143"><div class="num">${verifiedCount}</div><div class="lbl">Verified ESNcards</div></div>
-        <div class="stat-card" style="--accent:#F47B20"><div class="num">${openApps}</div><div class="lbl">Open applications</div></div>
-        <div class="stat-card" style="--accent:#EC008C"><div class="num">${last7}</div><div class="lbl">Applied last 7 days</div></div>
-        <div class="stat-card" style="--accent:#2E3192"><div class="num">${active30}</div><div class="lbl">Active last 30 days</div></div>
+  // ---------- applications ----------
+  // Full submission (v1.1.0): every field the student filled in, on demand.
+  // Since v1.4.0 it's a hidden row toggled from the Details button, so the
+  // queue itself stays one line per student.
+  const withOther = withOtherText;
+  const appDetailsHtml = (x) => {
+    const price = x.price ?? cardPricing.student;
+    return `
+      ${applicationFieldsHtml(x)}
+      <div class="form-actions" style="margin-top:8px;gap:8px;flex-wrap:wrap">
+        <a class="btn btn-sm btn-ghost btn-ink" href="/admin/user-${x.uid}">${mi("manage_accounts", "sm")} Account page</a>
+        ${x.status === "active" && x.pickedUpAt ? `<button class="btn btn-sm btn-ghost btn-ink app-unpickup" data-uid="${x.uid}">Undo pickup</button>` : ""}
+        ${x.status === "paid" && !x.paidOnline && price > 0 ? `<button class="btn btn-sm btn-ghost btn-danger app-unpaid" data-uid="${x.uid}" title="Marked paid by mistake - back to unpaid">Undo payment</button>` : ""}
+        ${x.status !== "active" ? `<button class="btn btn-sm btn-ghost btn-danger app-del" data-uid="${x.uid}">Remove application</button>` : ""}
       </div>`;
   };
-
-  // ---------- applications ----------
+  const statusBadge = (x) => {
+    const price = x.price ?? cardPricing.student;
+    if (x.status === "active") return `<span class="badge badge-paid">active</span>${x.pickedUpAt ? ` <span class="badge badge-paid" title="Handed over ${fmtDate(x.pickedUpAt)}">picked up</span>` : ` <span class="badge badge-requested">to pick up</span>`}<br><small class="form-hint"><code>${esc(x.cardNumber || "")}</code>${x.expiresAt ? ` · until ${fmtDate(x.expiresAt)}` : ""}</small>`;
+    if (x.status === "paid") return `<span class="badge badge-paid">paid ${x.paidOnline ? "online" : "cash"}</span>${x.paidAt ? `<br><small class="form-hint">${fmtDate(x.paidAt)} ${fmtTime(x.paidAt)}</small>` : ""}`;
+    if (x.status === "rejected") return `<span class="badge badge-soldout">rejected${x.refunded ? " · refunded" : ""}</span>${x.declineReason ? `<br><small class="form-hint">${esc(x.declineReason)}</small>` : ""}`;
+    return price === 0 ? `<span class="badge badge-esn">free · team</span>` : `<span class="badge badge-requested">unpaid</span>`;
+  };
+  const actionsHtml = (x) => {
+    const price = x.price ?? cardPricing.student;
+    const reject = `<button class="btn btn-sm btn-ghost btn-danger app-decline" data-uid="${x.uid}">Reject…</button>`;
+    // Office moment, step 1 (v1.4.0): money first. The card number field only
+    // appears once the board confirmed the payment - or when the card is free.
+    if (x.status === "applied" && price > 0) {
+      return `<div class="assign-row">
+        <button class="btn btn-sm btn-green app-paid" data-uid="${x.uid}" title="Confirm you received ${fmtMoney(price)} in cash at the office">${mi("payments", "sm")} Paid ${fmtMoney(price)}?</button>
+        ${reject}
+      </div>`;
+    }
+    if (x.status === "applied" || x.status === "paid") {
+      return `<div class="assign-row">
+        <input class="inline-input app-cardnum" data-uid="${x.uid}" placeholder="card number" autocapitalize="characters" autocomplete="off" spellcheck="false" style="width:150px" />
+        <button class="btn btn-sm btn-green app-assign" data-uid="${x.uid}" title="Verifies the number on esncard.org, links it to this student and sends the card-ready mail (Enter in the field does the same)">${mi("badge", "sm")} Assign</button>
+        ${reject}
+      </div>
+      <span class="app-check-out form-hint" data-uid="${x.uid}"></span>`;
+    }
+    if (x.status === "active" && !x.pickedUpAt) {
+      return `<button class="btn btn-sm btn-green app-pickup" data-uid="${x.uid}" title="One click when the card is handed over at the office">${mi("handshake", "sm")} Handed over</button>`;
+    }
+    return "";
+  };
   const appRowHtml = (x) => `
-    <tr class="${x.status === "paid" ? "row-hot" : ""}">
-      <td class="card-main"><a href="/admin/user-${x.uid}"><strong>${esc(`${x.firstName || ""} ${x.lastName || ""}`.trim() || x.email || "-")}</strong></a><br><small class="form-hint">${esc(x.email || "")}</small></td>
-      <td data-l="Applied">${x.createdAt ? fmtDate(x.createdAt) : "-"}</td>
-      <td data-l="Nationality">${esc(x.nationality || "-")}</td>
-      <td data-l="Institution">${esc(x.hostInstitution || "-")}</td>
+    <tr class="${x.status === "paid" ? "row-hot" : ""}" data-uid="${x.uid}">
+      <td class="card-main"><a href="/admin/user-${x.uid}"><strong>${esc(`${x.firstName || ""} ${x.lastName || ""}`.trim() || x.email || "-")}</strong></a><br><small class="form-hint">${esc(x.email || "")}</small>
+        <button class="btn-link app-details" data-uid="${x.uid}" aria-expanded="false">${mi("expand_more", "sm")} Details</button></td>
+      <td data-l="Applied" style="white-space:nowrap"><div class="td-stack">${x.createdAt ? `${fmtDate(x.createdAt)}<br><small class="form-hint">${fmtTime(x.createdAt)}${x.updatedAt && toDate(x.updatedAt)?.getTime() !== toDate(x.createdAt)?.getTime() ? ` · edited` : ""}</small>` : "-"}</div></td>
+      <td data-l="Student"><div class="td-stack">${instChip(x.hostInstitution, x.hostInstitutionOther)}<br><small class="form-hint">${esc(x.nationality || "-")}${x.stayType ? ` · ${esc(x.stayType)}` : ""}</small></div></td>
       <td data-l="Proof">${x.proofImage
         ? `<details class="proof-details"><summary>view</summary><img src="${esc(x.proofImage)}" alt="proof" /></details>`
         : x.hasProof
           ? `<span class="proof-slot" data-uid="${x.uid}"><button class="btn btn-sm btn-ghost app-proof" data-uid="${x.uid}" style="color:var(--esn-dark)">View proof</button></span>`
-          : "-"}</td>
-      <td data-l="Status">${x.status === "active"
-        ? `<span class="badge badge-paid">active</span>${x.pickedUpAt ? "" : ` <span class="badge badge-requested">to pick up</span>`}<br><small class="form-hint">${esc(x.cardNumber || "")}${x.expiresAt ? ` · until ${fmtDate(x.expiresAt)}` : ""}</small>`
-        : x.status === "paid" ? `<span class="badge badge-paid">paid${x.paidOnline ? " online" : ""}</span>`
-        : x.status === "rejected" ? `<span class="badge badge-soldout">declined${x.refunded ? " · refunded" : ""}</span>${x.declineReason ? `<br><small class="form-hint">${esc(x.declineReason)}</small>` : ""}`
-        : `<span class="badge badge-requested">applied</span>`}</td>
-      <td class="card-actions">
-        ${x.status === "applied" ? `<button class="btn btn-sm btn-green app-paid" data-uid="${x.uid}">${(x.price ?? cardPricing.student) === 0 ? "Free card (team) ✓" : `${fmtMoney(x.price ?? cardPricing.student)} received`}</button>` : ""}
-        ${x.status === "paid" ? `
-          <input class="inline-input app-cardnum" data-uid="${x.uid}" placeholder="card number" style="width:130px" />
-          <button class="btn btn-sm btn-ghost btn-ink app-check" data-uid="${x.uid}" title="Check this number against esncard.org (status, section, expiry)">${mi("verified", "sm")} Check</button>
-          <button class="btn btn-sm btn-green app-assign" data-uid="${x.uid}" title="Step 2 of 3 - pickup can only be ticked after the number is assigned & verified">Assign &amp; activate</button>
-          <span class="app-check-out" data-uid="${x.uid}"></span>` : ""}
-        ${x.status === "active" ? (x.pickedUpAt
-          ? `<span class="badge badge-paid" title="Handed over ${fmtDate(x.pickedUpAt)}">picked up ✓</span>`
-          : `<label class="checkbox-row" style="margin:0;white-space:nowrap" title="Tick when the physical card is handed to the member at the office">
-            <input type="checkbox" class="app-pickup" data-uid="${x.uid}" /> picked up
-          </label>`) : ""}
-        ${x.status === "applied" || x.status === "paid" ? `<button class="btn btn-sm btn-ghost app-decline" data-uid="${x.uid}" style="color:var(--esn-orange)">Decline${x.status === "paid" ? " &amp; refund" : ""}</button>` : ""}
-        ${x.status !== "active" ? `<button class="btn btn-sm btn-ghost app-del" data-uid="${x.uid}" title="Remove application" aria-label="Remove application" style="color:var(--esn-magenta)">✕</button>` : ""}
-      </td>
-    </tr>`;
+          : `<span class="form-hint">none</span>`}</td>
+      <td data-l="Status"><div class="td-stack">${statusBadge(x)}</div></td>
+      <td class="card-actions queue-actions">${actionsHtml(x)}</td>
+    </tr>
+    <tr class="app-detail-row ${x.status === "paid" ? "row-hot" : ""}" data-uid="${x.uid}" hidden><td colspan="6">${appDetailsHtml(x)}</td></tr>`;
 
+  const needsAction = (x) => x.status === "applied" || x.status === "paid" || (x.status === "active" && !x.pickedUpAt);
+  const payKind = (x) => x.status === "applied" ? "unpaid" : x.status === "rejected" ? "rejected" : x.paidOnline ? "online" : (x.price ?? cardPricing.student) === 0 ? "free" : "cash";
   const appMatches = (x) => {
     if (x._keep) return true; // just acted on - keep in view until reload
-    if (appFilter.chip === "assign" && x.status !== "paid") return false;
-    if (appFilter.chip === "open" && !(x.status === "applied" || x.status === "paid")) return false;
-    if (appFilter.chip === "pickup" && !(x.status === "active" && !x.pickedUpAt)) return false;
-    if (appFilter.chip === "active" && x.status !== "active") return false;
+    const c = appFilter.chip;
+    if (c === "assign" && !(x.status === "paid" || (x.status === "applied" && (x.price ?? cardPricing.student) === 0))) return false;
+    if (c === "office" && !(x.status === "applied" && (x.price ?? cardPricing.student) > 0)) return false;
+    if (c === "pickup" && !(x.status === "active" && !x.pickedUpAt)) return false;
+    if (c === "active" && x.status !== "active") return false;
+    if (c === "rejected" && x.status !== "rejected") return false;
+    if (appFilter.inst && (x.hostInstitution || "") !== appFilter.inst) return false;
+    if (appFilter.nat && (x.nationality || "") !== appFilter.nat) return false;
+    if (appFilter.stay && (x.stayType || "") !== appFilter.stay) return false;
+    if (appFilter.pay && payKind(x) !== appFilter.pay) return false;
+    if (appFilter.proof === "yes" && !(x.hasProof || x.proofImage)) return false;
+    if (appFilter.proof === "no" && (x.hasProof || x.proofImage)) return false;
+    if (appFilter.arrive && (x.stayFrom || "") !== appFilter.arrive) return false;
     const q = appFilter.q.trim().toLowerCase();
     if (!q) return true;
-    return `${x.firstName || ""} ${x.lastName || ""} ${x.email || ""} ${x.nationality || ""} ${x.hostInstitution || ""} ${x.cardNumber || ""}`.toLowerCase().includes(q);
+    return `${x.firstName || ""} ${x.lastName || ""} ${x.email || ""} ${x.nationality || ""} ${x.hostInstitution || ""} ${x.cardNumber || ""} ${x.homeUniversity || ""}`.toLowerCase().includes(q);
   };
 
   const renderApps = () => {
-    const toAssign = applications.filter((x) => x.status === "paid").length;
-    const open = applications.filter((x) => x.status === "applied" || x.status === "paid").length;
-    const active = applications.filter((x) => x.status === "active").length;
-    const toPickup = applications.filter((x) => x.status === "active" && !x.pickedUpAt).length;
     const chipsEl = document.getElementById("apps-chips");
+    if (!chipsEl) return;
+    const n = (fn) => applications.filter(fn).length;
+    const isAssignable = (x) => x.status === "paid" || (x.status === "applied" && (x.price ?? cardPricing.student) === 0);
+    const isOffice = (x) => x.status === "applied" && (x.price ?? cardPricing.student) > 0;
     chipsEl.innerHTML = [
-      ["assign", `${mi("assignment_turned_in", "sm")} To assign (${toAssign})`],
-      ["pickup", `To pick up (${toPickup})`],
-      ["open", `Open (${open})`],
-      ["active", `Active (${active})`],
+      ["assign", `${mi("badge", "sm")} To assign (${n(isAssignable)})`],
+      ["office", `${mi("point_of_sale", "sm")} Office - unpaid (${n(isOffice)})`],
+      ["pickup", `${mi("handshake", "sm")} To pick up (${n((x) => x.status === "active" && !x.pickedUpAt)})`],
+      ["active", `Active (${n((x) => x.status === "active")})`],
+      ["rejected", `Rejected (${n((x) => x.status === "rejected")})`],
       ["all", `All (${applications.length})`],
     ].map(([k, label]) => `<button class="chip ${appFilter.chip === k ? "active" : ""}" data-chip="${k}">${label}</button>`).join("");
     chipsEl.querySelectorAll(".chip").forEach((btn) => {
       btn.onclick = () => { appFilter.chip = btn.dataset.chip; appsShown = PAGE; renderApps(); };
     });
+    const selEl = document.getElementById("apps-selects");
+    if (selEl) {
+      const PAY_LABEL = { online: "Paid online", cash: "Paid cash", free: "Free (team)", unpaid: "Unpaid", rejected: "Rejected" };
+      selEl.innerHTML = [
+        selectHtml("af-inst", "Institution", uniq(applications, (x) => x.hostInstitution), appFilter.inst),
+        selectHtml("af-nat", "Nationality", uniq(applications, (x) => x.nationality), appFilter.nat),
+        selectHtml("af-stay", "Type of stay", uniq(applications, (x) => x.stayType), appFilter.stay),
+        selectHtml("af-pay", "Payment", uniq(applications, payKind), appFilter.pay, (v) => PAY_LABEL[v] || v),
+        selectHtml("af-proof", "Proof", [["yes", n((x) => x.hasProof || x.proofImage)], ["no", n((x) => !(x.hasProof || x.proofImage))]], appFilter.proof, (v) => v === "yes" ? "attached" : "missing"),
+        selectHtml("af-arrive", "Arriving", uniq(applications, (x) => x.stayFrom).sort((a, b) => a[0].localeCompare(b[0])), appFilter.arrive, ymLabel),
+        (appFilter.inst || appFilter.nat || appFilter.stay || appFilter.pay || appFilter.proof || appFilter.arrive)
+          ? `<button class="btn btn-sm btn-ghost btn-danger" id="af-clear">✕ clear filters</button>` : "",
+      ].join("");
+      const bind = (id, key) => selEl.querySelector(`#${id}`)?.addEventListener("change", (e) => { appFilter[key] = e.target.value; appsShown = PAGE; renderApps(); });
+      bind("af-inst", "inst"); bind("af-nat", "nat"); bind("af-stay", "stay"); bind("af-pay", "pay"); bind("af-proof", "proof"); bind("af-arrive", "arrive");
+      selEl.querySelector("#af-clear")?.addEventListener("click", () => { Object.assign(appFilter, { inst: "", nat: "", stay: "", pay: "", proof: "", arrive: "" }); renderApps(); });
+      if (appFilter.inst || appFilter.nat || appFilter.stay || appFilter.pay || appFilter.proof || appFilter.arrive) document.getElementById("apps-more-filters")?.setAttribute("open", "");
+    }
 
     const list = applications.filter(appMatches);
+    // Queue order: who paid first is served first; everything else newest first.
+    if (appFilter.chip === "assign") list.sort((a, b) => (toDate(a.paidAt || a.createdAt)?.getTime() || 0) - (toDate(b.paidAt || b.createdAt)?.getTime() || 0));
     const shown = list.slice(0, appsShown);
     const box = document.getElementById("apps-box");
     box.innerHTML = shown.length ? `
-      <div class="table-wrap cards"><table>
-        <thead><tr><th>Applicant</th><th>Applied</th><th>Nationality</th><th>Institution</th><th>Proof</th><th>Status</th><th></th></tr></thead>
+      <div class="table-wrap cards queue"><table>
+        <thead><tr><th>Applicant</th><th>Applied</th><th>Student</th><th>Proof</th><th>Status</th><th></th></tr></thead>
         <tbody>${shown.map(appRowHtml).join("")}</tbody>
       </table></div>
       ${list.length > shown.length ? `<div class="form-actions"><button class="btn btn-ghost btn-ink" id="apps-more">Show more (${list.length - shown.length} left)</button></div>` : ""}`
-    : `<div class="empty-state"><p>${applications.length ? "No applications match." : "No applications yet."}</p></div>`;
+    : `<div class="empty-state"><p>${applications.length ? (appFilter.chip === "assign" && !appFilter.q ? "Nothing to assign - every paid application has its card." : appFilter.chip === "office" && !appFilter.q ? "Nobody is waiting to pay at the office." : "No applications match.") : "No applications yet."}</p></div>`;
     document.getElementById("apps-count").textContent = `Showing ${shown.length} of ${list.length}`;
     document.getElementById("apps-more")?.addEventListener("click", () => { appsShown += 200; renderApps(); });
 
     // Row actions update the local list in place - no full reload, no lost scroll.
+    box.querySelectorAll(".app-details").forEach((btn) => {
+      btn.onclick = () => {
+        const row = box.querySelector(`tr.app-detail-row[data-uid="${btn.dataset.uid}"]`);
+        if (!row) return;
+        row.hidden = !row.hidden;
+        btn.setAttribute("aria-expanded", String(!row.hidden));
+        btn.innerHTML = `${mi(row.hidden ? "expand_more" : "expand_less", "sm")} Details`;
+      };
+    });
+    // Enter in the card field = Assign (desk speed: type, Enter, next).
+    box.querySelectorAll(".app-cardnum").forEach((inp) => {
+      inp.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") { e.preventDefault(); box.querySelector(`.app-assign[data-uid="${inp.dataset.uid}"]`)?.click(); }
+      });
+    });
     box.querySelectorAll(".app-proof").forEach((btn) => {
       btn.onclick = async () => {
         btn.disabled = true; btn.textContent = "Loading…";
@@ -10759,31 +11266,32 @@ async function viewAdminUsers(yearSel = ayStartYear(), allUsers = false) {
     });
     box.querySelectorAll(".app-paid").forEach((btn) => {
       btn.onclick = async () => {
+        const x = applications.find((a) => a.uid === btn.dataset.uid);
+        const price = x?.price ?? cardPricing.student;
+        const who = `${x?.firstName || ""} ${x?.lastName || ""}`.trim() || x?.email || "this student";
+        const ok = await appConfirm(`Did you receive ${fmtMoney(price)} in cash from ${who}?\n\nThis marks the application as paid; the card number field appears next.`, { okLabel: `Yes, ${fmtMoney(price)} received`, cancelLabel: "No" });
+        if (!ok) return;
         btn.disabled = true;
         try {
-          await updateDoc(doc(db, "esncardApplications", btn.dataset.uid), { status: "paid", paidAt: serverTimestamp() });
-          const x = applications.find((a) => a.uid === btn.dataset.uid);
-          if (x) x.status = "paid";
-          toast("Payment registered - now assign a card number.", "success");
-          renderApps(); renderStats();
+          await updateDoc(doc(db, "esncardApplications", btn.dataset.uid), { status: "paid", paidAt: serverTimestamp(), paidOnline: false });
+          if (x) { x.status = "paid"; x.paidAt = Timestamp.now(); x.paidOnline = false; x._keep = true; }
+          toast(`${fmtMoney(price)} registered - now type the card number.`, "success");
+          renderApps();
+          box.querySelector(`.app-cardnum[data-uid="${btn.dataset.uid}"]`)?.focus();
         } catch (err) { toast("Failed: " + err.message, "error"); btn.disabled = false; }
       };
     });
-    box.querySelectorAll(".app-check").forEach((btn) => {
+    box.querySelectorAll(".app-unpaid").forEach((btn) => {
       btn.onclick = async () => {
-        const uid = btn.dataset.uid;
-        const num = box.querySelector(`.app-cardnum[data-uid="${uid}"]`).value.trim().toUpperCase().replace(/\s+/g, "");
-        const out = box.querySelector(`.app-check-out[data-uid="${uid}"]`);
-        if (num.length < 6) { toast("Type the card number first.", "warn"); return; }
+        if (!await appConfirm("Set this application back to unpaid?", { okLabel: "Yes, back to unpaid", cancelLabel: "No" })) return;
         btn.disabled = true;
-        if (out) out.innerHTML = ` ${mi("hourglass_top", "sm")} checking…`;
         try {
-          const r = (await httpsCallable(functions, "verifyEsncard")({ code: num })).data;
-          if (out) out.innerHTML = " " + esncardCheckBadge(r);
-        } catch (err) {
-          if (out) out.innerHTML = ` <span class="badge badge-soldout">${esc(err?.message || "check failed")}</span>`;
-        }
-        btn.disabled = false;
+          await updateDoc(doc(db, "esncardApplications", btn.dataset.uid), { status: "applied", paidAt: deleteField(), paidOnline: deleteField() });
+          const x = applications.find((a) => a.uid === btn.dataset.uid);
+          if (x) { x.status = "applied"; x.paidAt = null; x.paidOnline = false; x._keep = true; }
+          toast("Back to unpaid.", "success");
+          renderApps();
+        } catch (err) { toast("Failed: " + err.message, "error"); btn.disabled = false; }
       };
     });
     box.querySelectorAll(".app-assign").forEach((btn) => {
@@ -10801,89 +11309,106 @@ async function viewAdminUsers(yearSel = ayStartYear(), allUsers = false) {
           toast(`Card ${num} is already assigned to ${esc(dupApp ? `${dupApp.firstName || ""} ${dupApp.lastName || ""}`.trim() || dupApp.email || "someone else" : dupUser.displayName || dupUser.email || "someone else")} - double-check the number on the physical card.`, "error");
           return;
         }
+        const x0 = applications.find((a) => a.uid === uid);
+        const price0 = x0?.price ?? cardPricing.student;
+        // Money first (v1.4.0): the field only shows for paid or free cards,
+        // but never trust the DOM - refuse an unpaid one.
+        if (x0?.status === "applied" && price0 > 0) { toast("Confirm the payment first (Paid? button).", "warn"); return; }
         btn.disabled = true;
+        const out = box.querySelector(`.app-check-out[data-uid="${uid}"]`);
+        if (out) out.innerHTML = `${mi("hourglass_top", "sm")} checking on esncard.org…`;
         try {
+          if (x0?.status === "applied") {
+            // free team card: no payment step, mark it as settled
+            await updateDoc(doc(db, "esncardApplications", uid), { status: "paid", paidAt: serverTimestamp(), paidOnline: false });
+            x0.status = "paid";
+          }
           // The server verifies the number on esncard.org, refuses
           // blocked/expired/unknown AND already-active cards (an active card is
           // the student's to link themselves), guarantees one-card-one-person,
           // links it and flips the application so the pickup mail goes out.
           const r = (await httpsCallable(functions, "assignEsncard")({ uid, code: num })).data;
+          if (out) out.innerHTML = "";
           const x = applications.find((a) => a.uid === uid);
           if (x) { x.status = "active"; x.cardNumber = num; x._keep = true; }
           const u = users.find((uu) => uu.id === uid);
           if (u) { u.esncardCode = num; u.esncardVerified = false; u.esncardStatus = r.status; }
-          toast(`Card ${num} assigned - the student gets the pickup e-mail with the number and the note to register it on esncard.org. Member prices switch on automatically once they do. Tick "picked up" when you hand it over.`, "success");
-          renderApps(); renderStats(); renderUsers();
-        } catch (err) { toast(err?.message || "Assigning failed.", err?.code === "functions/failed-precondition" ? "warn" : "error"); btn.disabled = false; }
-      };
-    });
-    box.querySelectorAll(".app-pickup").forEach((cb) => {
-      cb.onchange = async () => {
-        const x = applications.find((a) => a.uid === cb.dataset.uid);
-        // Sequence guard: pickup only exists AFTER a card number was
-        // assigned & verified (status 'active'). Never before.
-        if (cb.checked && (!x || x.status !== "active" || !x.cardNumber)) {
-          toast("Assign & activate a card number first - pickup is the last step.", "error");
-          cb.checked = false;
-          return;
-        }
-        cb.disabled = true;
-        try {
-          await updateDoc(doc(db, "esncardApplications", cb.dataset.uid),
-            cb.checked ? { pickedUpAt: serverTimestamp() } : { pickedUpAt: deleteField() });
-          if (x) x.pickedUpAt = cb.checked ? Timestamp.now() : null;
-          toast(cb.checked ? "Marked as picked up." : "Pickup unmarked.", "success");
-          renderApps();
+          toast(`Card ${num} assigned - the student gets the e-mail with the number. Click "Handed over" when you give them the card.`, "success");
+          renderApps(); renderUsers();
+          // Desk flow: jump to the next card field so the next student is one Enter away.
+          box.querySelector(".app-cardnum")?.focus();
         } catch (err) {
-          toast("Failed: " + err.message, "error");
-          cb.checked = !cb.checked;
-          cb.disabled = false;
+          if (out) out.innerHTML = `<span class="badge badge-soldout">${esc(err?.message || "assigning failed")}</span>`;
+          toast(err?.message || "Assigning failed.", err?.code === "functions/failed-precondition" ? "warn" : "error");
+          btn.disabled = false;
         }
       };
     });
+    const setPickup = async (uid, picked, btn) => {
+      const x = applications.find((a) => a.uid === uid);
+      if (picked && (!x || x.status !== "active" || !x.cardNumber)) { toast("Assign a card number first - handing over is the last step.", "error"); return; }
+      if (btn) btn.disabled = true;
+      try {
+        await updateDoc(doc(db, "esncardApplications", uid), picked ? { pickedUpAt: serverTimestamp() } : { pickedUpAt: deleteField() });
+        if (x) { x.pickedUpAt = picked ? Timestamp.now() : null; x._keep = true; }
+        toast(picked ? "Handed over ✓" : "Pickup undone.", "success");
+        renderApps();
+      } catch (err) { toast("Failed: " + err.message, "error"); if (btn) btn.disabled = false; }
+    };
+    box.querySelectorAll(".app-pickup").forEach((btn) => { btn.onclick = () => setPickup(btn.dataset.uid, true, btn); });
+    box.querySelectorAll(".app-unpickup").forEach((btn) => { btn.onclick = () => setPickup(btn.dataset.uid, false, btn); });
     box.querySelectorAll(".app-decline").forEach((btn) => {
       btn.onclick = async () => {
         const x = applications.find((a) => a.uid === btn.dataset.uid);
         const wasPaid = x?.status === "paid";
-        const reason = await appPrompt(`Why is this application declined? The applicant sees this reason.${wasPaid ? "\n\nAn online payment is refunded automatically via Stripe; a cash payment you refund at the office." : ""}`, { multiline: true, placeholder: "Short reason for the applicant…", okLabel: "Decline application" });
+        const reason = await appPrompt(`Why is this application rejected? The student sees this reason and can fix & resubmit.${wasPaid ? (x?.paidOnline ? "\n\nThe online payment is refunded automatically via Stripe." : "\n\nThis one was paid in cash - refund it at the office.") : ""}`, { multiline: true, placeholder: "e.g. The proof isn't readable - please attach your acceptance letter.", okLabel: "Reject application", cancelLabel: "Keep it", danger: true });
         if (reason === null) return;
         const label = btn.textContent;
-        btn.disabled = true; btn.textContent = "Declining…";
+        btn.disabled = true; btn.textContent = "Rejecting…";
         try {
           const fn = httpsCallable(functions, "declineEsncardApplication");
           const res = await fn({ uid: btn.dataset.uid, reason: reason.trim() });
           if (x) { x.status = "rejected"; x.declineReason = reason.trim(); x.refunded = !!res.data?.refunded; }
-          toast(res.data?.refunded ? "Declined - the online payment was refunded via Stripe."
-            : res.data?.paidCash ? "Declined - heads up: this one was paid in cash, refund it at the office."
-            : "Application declined - the applicant can fix & resubmit.", "success");
-          renderApps(); renderStats();
+          toast(res.data?.refunded ? "Rejected - the online payment was refunded via Stripe."
+            : res.data?.paidCash ? "Rejected - heads up: this one was paid in cash, refund it at the office."
+            : "Application rejected - the student can fix & resubmit.", "success");
+          renderApps();
         } catch (err) {
-          toast("Decline failed: " + err.message, "error");
+          toast("Reject failed: " + err.message, "error");
           btn.disabled = false; btn.textContent = label;
         }
       };
     });
     box.querySelectorAll(".app-del").forEach((btn) => {
       btn.onclick = async () => {
-        if (!await appConfirm("Remove this application?")) return;
+        if (!await appConfirm("Remove this application? Its submission history goes with it.", { danger: true, okLabel: "Remove", cancelLabel: "Keep" })) return;
         try {
+          const hist = await getDocs(collection(db, "esncardApplications", btn.dataset.uid, "history")).catch(() => null);
+          if (hist) await Promise.all(hist.docs.map((d) => deleteDoc(d.ref).catch(() => {})));
           await deleteDoc(doc(db, "esncardApplications", btn.dataset.uid));
           deleteDoc(doc(db, "applicationProofs", btn.dataset.uid)).catch(() => {});
           const i = applications.findIndex((a) => a.uid === btn.dataset.uid);
           if (i >= 0) applications.splice(i, 1);
           toast("Application removed", "success");
-          renderApps(); renderStats();
+          renderApps();
         } catch (err) { toast(err.message, "error"); }
       };
     });
   };
 
   // ---------- users ----------
+  const roleBadge = (u) => {
+    const parts = [];
+    if (u._role) parts.push(`<span class="badge badge-esn" title="${esc(u._fn || ROLE_LABEL[u._role] || u._role)}">${esc(ROLE_LABEL[u._role] || u._role)}${u._fn ? ` · ${esc(u._fn)}` : ""}</span>`);
+    if (u.alumni) parts.push(`<span class="badge badge-requested">alumni</span>`);
+    return parts.length ? `<div style="margin-top:4px;display:flex;gap:4px;flex-wrap:wrap">${parts.join("")}</div>` : "";
+  };
   const userRowHtml = (u) => `
-    <tr>
-      <td class="card-main"><a href="/admin/user-${u.id}"><strong>${esc(u.displayName || "-")}</strong></a></td>
-      <td data-l="Email">${esc(u.email || "-")}</td>
+    <tr class="${u._role ? "row-team" : ""}">
+      <td class="card-main"><a href="/admin/user-${u.id}"><strong>${esc(u.displayName || "-")}</strong></a><br><small class="form-hint">${esc(u.email || "")}</small>${roleBadge(u)}</td>
+      <td data-l="Institution">${instChip(u.hostInstitution)}</td>
       <td data-l="Nationality">${esc(u.nationality || "-")}</td>
+      <td data-l="Last seen" style="white-space:nowrap">${u.lastLogin ? fmtDate(u.lastLogin) : "-"}</td>
       <td data-l="ESNcard">${u.esncardCode ? `<code style="font-size:.85rem">${esc(u.esncardCode)}</code>` : `<span class="form-hint">-</span>`}</td>
       <td data-l="Status">${userCardBadge(u)}</td>
       <td style="white-space:nowrap" class="card-actions">
@@ -10893,70 +11418,99 @@ async function viewAdminUsers(yearSel = ayStartYear(), allUsers = false) {
 
   const userMatches = (u) => {
     if (natFilter && u.nationality !== natFilter) return false;
-    if (userFilter.chip !== "all" && userCardStatus(u).key !== userFilter.chip) return false;
+    const c = userFilter.chip;
+    if (c === "team" && !u._role) return false;
+    else if (c === "alumni" && !u.alumni) return false;
+    else if (c !== "all" && c !== "team" && c !== "alumni" && userCardStatus(u).key !== c) return false;
+    if (userFilter.inst && (u.hostInstitution || "") !== userFilter.inst) return false;
+    if (userFilter.nat && (u.nationality || "") !== userFilter.nat) return false;
+    if (userFilter.role && u._role !== userFilter.role) return false;
     const q = userFilter.q.trim().toLowerCase();
     if (!q) return true;
-    return `${u.displayName || ""} ${u.email || ""} ${u.esncardCode || ""}`.toLowerCase().includes(q);
+    return `${u.displayName || ""} ${u.email || ""} ${u.esncardCode || ""} ${u.university || ""}`.toLowerCase().includes(q);
   };
 
   const renderUsers = () => {
+    const chipsEl = document.getElementById("users-chips");
+    if (!chipsEl) return;
     // Live counts per ESNcard status - the board sees the whole spread at a glance.
     const by = { none: 0, active: 0, available: 0, expired: 0, linked: 0 };
     users.forEach((u) => { by[userCardStatus(u).key] = (by[userCardStatus(u).key] || 0) + 1; });
-    const chipsEl = document.getElementById("users-chips");
+    const teamN = users.filter((u) => u._role).length;
+    const alumniN = users.filter((u) => u.alumni).length;
     chipsEl.innerHTML = [
       ["all", `All (${users.length})`],
-      ["active", `${mi("verified", "sm")} Active (${by.active})`],
+      ["active", `${mi("verified", "sm")} Active card (${by.active})`],
       ["available", `${mi("hourglass_top", "sm")} Available (${by.available})`],
       ["expired", `${mi("event_busy", "sm")} Expired (${by.expired})`],
       ...(by.linked ? [["linked", `Linked (${by.linked})`]] : []),
       ["none", `No card (${by.none})`],
+      ["team", `${mi("group", "sm")} Team (${teamN})`],
+      ...(alumniN ? [["alumni", `Alumni (${alumniN})`]] : []),
     ].map(([k, label]) => `<button class="chip ${userFilter.chip === k ? "active" : ""}" data-chip="${k}">${label}</button>`).join("");
     chipsEl.querySelectorAll(".chip").forEach((btn) => {
       btn.onclick = () => { userFilter.chip = btn.dataset.chip; usersShown = PAGE; renderUsers(); };
     });
+    const selEl = document.getElementById("users-selects");
+    if (selEl) {
+      selEl.innerHTML = [
+        selectHtml("uf-inst", "Institution", uniq(users, (u) => u.hostInstitution), userFilter.inst),
+        selectHtml("uf-nat", "Nationality", uniq(users, (u) => u.nationality), userFilter.nat),
+        selectHtml("uf-role", "Team role", uniq(users, (u) => u._role), userFilter.role, (v) => ROLE_LABEL[v] || v),
+        (userFilter.inst || userFilter.nat || userFilter.role)
+          ? `<button class="btn btn-sm btn-ghost btn-danger" id="uf-clear">✕ clear filters</button>` : "",
+      ].join("");
+      const bind = (id, key) => selEl.querySelector(`#${id}`)?.addEventListener("change", (e) => { userFilter[key] = e.target.value; usersShown = PAGE; renderUsers(); });
+      bind("uf-inst", "inst"); bind("uf-nat", "nat"); bind("uf-role", "role");
+      selEl.querySelector("#uf-clear")?.addEventListener("click", () => { Object.assign(userFilter, { inst: "", nat: "", role: "" }); renderUsers(); });
+    }
 
     const list = users.filter(userMatches);
     const shown = list.slice(0, usersShown);
     const box = document.getElementById("users-box");
     box.innerHTML = shown.length ? `
       <div class="table-wrap cards"><table>
-        <thead><tr><th>Name</th><th>Email</th><th>Nationality</th><th>ESNcard code</th><th>Card status</th><th></th></tr></thead>
+        <thead><tr><th>Name</th><th>Institution</th><th>Nationality</th><th>Last seen</th><th>ESNcard code</th><th>Card status</th><th></th></tr></thead>
         <tbody>${shown.map(userRowHtml).join("")}</tbody>
       </table></div>
       ${list.length > shown.length ? `<div class="form-actions"><button class="btn btn-ghost btn-ink" id="users-more">Show more (${list.length - shown.length} left)</button></div>` : ""}`
     : `<div class="empty-state"><p>No users match${natFilter ? ` from ${esc(natFilter)}` : ""}.</p></div>`;
     document.getElementById("users-count").innerHTML =
       `Showing ${shown.length} of ${list.length}` +
-      (natFilter ? ` · from <strong>${esc(natFilter)}</strong> <button class="btn btn-sm btn-ghost" id="btn-clear-nat" style="color:var(--esn-magenta)">✕ clear</button>` : "");
+      (natFilter ? ` · from <strong>${esc(natFilter)}</strong> <button class="btn btn-sm btn-ghost btn-danger" id="btn-clear-nat">✕ clear</button>` : "");
     document.getElementById("users-more")?.addEventListener("click", () => { usersShown += 200; renderUsers(); });
     document.getElementById("btn-clear-nat")?.addEventListener("click", () => { natFilter = null; renderUsers(); });
   };
 
-  renderStats();
   renderApps();
   renderUsers();
+  // Sticky filter bar sits right under the site header, whatever its height.
+  try { document.documentElement.style.setProperty("--hdr", `${document.querySelector(".site-header")?.offsetHeight || 0}px`); } catch { /* cosmetic */ }
+  // Desk flow: on a real keyboard the search box is ready to type into.
+  if (matchMedia("(pointer:fine)").matches) document.getElementById("apps-q")?.focus();
 
-  document.getElementById("apps-q").addEventListener("input", (e) => { appFilter.q = e.target.value; appsShown = PAGE; renderApps(); });
-  document.getElementById("users-q").addEventListener("input", (e) => { userFilter.q = e.target.value; usersShown = PAGE; renderUsers(); });
+  document.getElementById("apps-q")?.addEventListener("input", (e) => { appFilter.q = e.target.value; appsShown = PAGE; renderApps(); });
+  document.getElementById("users-q")?.addEventListener("input", (e) => { userFilter.q = e.target.value; usersShown = PAGE; renderUsers(); });
 
-  document.getElementById("apps-year")?.addEventListener("change", (e) => viewAdminUsers(parseInt(e.target.value, 10), allUsers));
-  document.getElementById("users-all")?.addEventListener("click", (e) => { e.preventDefault(); viewAdminUsers(yearSel, true); });
+  document.getElementById("apps-year")?.addEventListener("change", (e) => viewAdminUsers(parseInt(e.target.value, 10), allUsers, tab));
+  document.getElementById("users-all")?.addEventListener("click", (e) => { e.preventDefault(); viewAdminUsers(yearSel, true, tab); });
 
   document.getElementById("btn-apps-csv")?.addEventListener("click", () => {
     const csvEsc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
     const lines = [
       ["Timestamp", "First name", "Last name", "Birth date", "Nationality", "Institution in Ghent",
-       "Type of stay", "Home university", "Home city", "Field of studies", "Email", "Phone",
-       "ID number", "ESNcard number", "Status", "Price", "Picked up", "Activation date", "Expiration date",
+       "Type of stay", "Stay from", "Stay until", "Home university", "Home country", "Home city", "Field of studies", "Email", "Phone",
+       "ESNcard number", "Status", "Price", "Picked up", "Activation date", "Expiration date",
        "How found ESN", "Ideas"].map(csvEsc).join(","),
       ...applications.map((x) => [
         toDate(x.createdAt)?.toISOString() || "", x.firstName, x.lastName, x.birthday, x.nationality,
-        x.hostInstitution, x.stayType, x.homeUniversity, x.homeCity, x.fieldOfStudies, x.email,
-        x.phone, x.idNumber, x.cardNumber, x.status, ((x.price ?? 1500) / 100).toFixed(2),
+        withOther(x.hostInstitution, x.hostInstitutionOther), withOther(x.stayType, x.stayTypeOther),
+        x.stayFrom || "", x.stayUntilUnknown ? "unknown" : (x.stayUntil || ""),
+        x.homeUniversity, x.homeCountry, x.homeCity, withOther(x.fieldOfStudies, x.fieldOfStudiesOther), x.email,
+        x.phone, x.cardNumber, x.status, ((x.price ?? 1500) / 100).toFixed(2),
         toDate(x.pickedUpAt)?.toISOString() || "", toDate(x.activatedAt)?.toISOString() || "",
         toDate(x.expiresAt)?.toISOString() || "",
-        (x.discovery || []).join("; "), x.ideas,
+        (x.discovery || []).map((d) => /^other\b/i.test(d) && x.discoveryOther ? `Other (${x.discoveryOther})` : d).join("; "), x.ideas,
       ].map(csvEsc).join(",")),
     ];
     const blob = new Blob([lines.join("\n")], { type: "text/csv" });
@@ -10967,14 +11521,14 @@ async function viewAdminUsers(yearSel = ayStartYear(), allUsers = false) {
     URL.revokeObjectURL(a.href);
   });
 
-  document.getElementById("btn-users-csv").onclick = () => {
+  document.getElementById("btn-users-csv")?.addEventListener("click", () => {
     const csvEsc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
     const lines = [
-      ["Name", "Email", "Birthday", "Phone", "Nationality", "HomeCountry", "HomeCity", "University", "Instagram", "LinkedIn", "ESNcardCode", "Verified"].map(csvEsc).join(","),
-      ...users.map((u) => [
+      ["Name", "Email", "Birthday", "Phone", "Nationality", "HomeCountry", "HomeCity", "University", "InstitutionInGhent", "Instagram", "LinkedIn", "ESNcardCode", "CardStatus", "TeamRole", "BoardFunction", "Alumni", "LastLogin"].map(csvEsc).join(","),
+      ...users.filter(userMatches).map((u) => [
         u.displayName, u.email, u.birthday, u.phone, u.nationality,
-        u.homeCountry, u.homeCity, u.university, u.instagram, u.linkedin,
-        u.esncardCode, u.esncardVerified ? "yes" : "no",
+        u.homeCountry, u.homeCity, u.university, u.hostInstitution, u.instagram, u.linkedin,
+        u.esncardCode, userCardStatus(u).key, u._role, u._fn, u.alumni ? "yes" : "no", toDate(u.lastLogin)?.toISOString() || "",
       ].map(csvEsc).join(",")),
     ];
     const blob = new Blob([lines.join("\n")], { type: "text/csv" });
@@ -10983,7 +11537,7 @@ async function viewAdminUsers(yearSel = ayStartYear(), allUsers = false) {
     a.download = "esn-users.csv";
     a.click();
     URL.revokeObjectURL(a.href);
-  };
+  });
 }
 
 async function viewAdminList(yearSel = ayStartYear()) {
@@ -11313,7 +11867,7 @@ async function viewAdminOfficeForm() {
       </div>
       <div class="form-actions">
         <button type="submit" class="btn btn-cyan">Create office hours</button>
-        <a href="/admin" class="btn btn-ghost btn-ink">Cancel</a>
+        <a href="/admin" class="btn btn-ghost btn-danger">Cancel</a>
       </div>
     </form>
   `;
@@ -11524,7 +12078,7 @@ async function viewAdminEventForm(eventId, dupFromId) {
             <div class="img-upload-row">
               <img id="f-image-preview" class="img-preview ${f?.image ? "" : "hidden"}" src="${esc(f?.image || "")}" alt="" />
               <input id="f-image-file" type="file" accept="image/*" />
-              <button type="button" id="f-image-remove" class="btn btn-ghost btn-sm ${f?.image ? "" : "hidden"}" style="color:var(--esn-magenta)">Remove photo</button>
+              <button type="button" id="f-image-remove" class="btn btn-ghost btn-sm ${f?.image ?  btn-danger"" : "hidden"}">Remove photo</button>
             </div>
           </div>
           <div class="form-field">
@@ -11681,8 +12235,8 @@ async function viewAdminEventForm(eventId, dupFromId) {
             </select>
           </div>
           <button type="submit" class="btn btn-green">${ev ? "Save changes" : "Create event"}</button>
-          <a href="/admin" class="btn btn-ghost btn-ink">Cancel</a>
-          ${ev ? `<button type="button" id="btn-delete" class="btn btn-ghost" style="margin-left:auto;color:var(--esn-magenta);border-color:var(--esn-magenta)">Delete event</button>` : ""}
+          <a href="/admin" class="btn btn-ghost btn-danger">Cancel</a>
+          ${ev ? `<button type="button" id="btn-delete" class="btn btn-ghost btn-danger" style="margin-left:auto;color:var(--esn-magenta);border-color:var(--esn-magenta)">Delete event</button>` : ""}
         </div>
       </div>
     </form>
@@ -11826,7 +12380,7 @@ async function viewAdminEventForm(eventId, dupFromId) {
         <input class="opt-price" type="number" min="0" step="0.01" placeholder="€" title="Price €" value="${o.price != null ? (o.price / 100).toFixed(2) : ""}" />
         <input class="opt-price-esn" type="number" min="0" step="0.01" placeholder="Member €" title="ESNcard price €" value="${o.priceEsn != null ? (o.priceEsn / 100).toFixed(2) : ""}" />
         <input class="opt-cap" type="number" min="1" placeholder="max" title="Capacity" value="${o.capacity || ""}" />
-        <button type="button" class="btn btn-sm btn-ghost opt-del" title="Remove" style="color:var(--esn-magenta)">✕</button>
+        <button type="button" class="btn btn-sm btn-ghost opt-del btn-danger" title="Remove">✕</button>
       </div>`).join("");
     document.querySelectorAll("#options-list .opt-del").forEach((b) => {
       b.onclick = () => {
@@ -11867,7 +12421,7 @@ async function viewAdminEventForm(eventId, dupFromId) {
         <input class="sh-time" placeholder="21:00–23:00" maxlength="40" title="Time (free text)" value="${esc(s.time || "")}" />
         <input class="sh-board" type="number" min="0" placeholder="board" title="Board spots" value="${s.board || ""}" />
         <input class="sh-vol" type="number" min="0" placeholder="vol." title="Volunteer spots" value="${s.vol || ""}" />
-        <button type="button" class="btn btn-sm btn-magenta sh-del" title="Remove">✕</button>
+        <button type="button" class="btn btn-sm btn-danger-solid sh-del" title="Remove">✕</button>
       </div>`).join("");
     document.querySelectorAll("#shifts-list .sh-del").forEach((b) => {
       b.onclick = () => {
@@ -12150,7 +12704,7 @@ async function viewAdminEventDetail(eventId) {
       <a href="/event/${ev.id}" class="btn btn-ghost btn-sm btn-ink">${mi("visibility")} View page</a>
       ${ev.dsaActivityId ? `<a href="https://dsa.ugent.be/activiteiten/${ev.dsaActivityId}" target="_blank" rel="noopener" class="btn btn-ghost btn-sm btn-ink" title="This event's activity on the UGent DSA site">${mi("school", "sm")} Open in DSA ↗</a>` : ""}
       <button class="btn btn-dark btn-sm" id="btn-csv">Export CSV</button>
-      ${!ev.cancelled && !isPastEvent ? `<button class="btn btn-ghost btn-sm" id="btn-cancel-event" style="margin-left:auto;color:var(--esn-magenta);border-color:var(--esn-magenta)">Cancel event…</button>` : ""}
+      ${!ev.cancelled && !isPastEvent ? `<button class="btn btn-ghost btn-sm btn-danger" id="btn-cancel-event" style="margin-left:auto">Cancel event…</button>` : ""}
     </div>
     <div id="ed-stats"></div>
     <div id="ed-cash"></div>
@@ -12255,7 +12809,7 @@ async function viewAdminEventDetail(eventId) {
             <td data-l="Status"><span class="badge badge-${r.status}">${r.status}</span></td>
             <td data-l="Checked in">${r.checkedInAt ? mi("check_circle", "sm") : "-"}</td>
             <td data-l="When">${r.createdAt ? `${fmtDate(r.createdAt)} ${fmtTime(r.createdAt)}` : "-"}</td>
-            <td class="card-actions"><button class="btn btn-sm btn-ghost btn-reg-del" data-rid="${r.id}" title="Remove registration" style="color:var(--esn-magenta)">✕ Remove</button></td>
+            <td class="card-actions"><button class="btn btn-sm btn-ghost btn-reg-del btn-danger" data-rid="${r.id}" title="Remove registration">✕ Remove</button></td>
           </tr>`).join("")}</tbody>
       </table></div>
       ${list.length > shownRegs.length ? `<div class="form-actions"><button class="btn btn-ghost btn-ink" id="ed-regs-more">Show more (${list.length - shownRegs.length} left)</button></div>` : ""}`
@@ -12306,7 +12860,7 @@ async function viewAdminEventDetail(eventId) {
             <td class="card-main"><strong>${esc(w.name || "-")}</strong></td>
             <td data-l="Email">${esc(w.email || "-")}</td>
             <td data-l="Joined">${w.createdAt ? `${fmtDate(w.createdAt)} ${fmtTime(w.createdAt)}` : "-"}</td>
-            <td class="card-actions"><button class="btn btn-sm btn-ghost btn-wl-del" data-wid="${w.id}" title="Remove from waitlist" aria-label="Remove from waitlist" style="color:var(--esn-magenta)">✕</button></td>
+            <td class="card-actions"><button class="btn btn-sm btn-ghost btn-wl-del btn-danger" data-wid="${w.id}" title="Remove from waitlist" aria-label="Remove from waitlist">✕</button></td>
           </tr>`).join("")}</tbody>
       </table></div>` : "";
 
@@ -12460,7 +13014,7 @@ function renderTodoSection(box, todos, team) {
       <input type="checkbox" class="todo-tick" data-tid="${t.id}" ${t.status === "done" ? "checked" : ""} ${canTick(t) ? "" : "disabled"} aria-label="Done" />
       <span class="todo-text">${t.status === "done" ? "<s>" : ""}${esc(t.text)}${t.status === "done" ? "</s>" : ""}
         <small class="todo-when">${t.assignedName ? `<span class="todo-who ${isMine(t) ? "me" : ""}">${mi("person", "sm")} ${esc(isMine(t) ? "you" : t.assignedName.split(" ")[0])}</span>` : `<span class="todo-who">${mi("group", "sm")} anyone</span>`}${t.createdAt ? ` · added ${shortD(t.createdAt)}` : ""}${t.status === "done" && t.doneAt ? ` · done ${shortD(t.doneAt)}` : ""}</small></span>
-      ${isAdmin ? `<button class="btn btn-sm btn-ghost todo-del" data-tid="${t.id}" title="Remove to-do" aria-label="Remove to-do" style="color:var(--esn-magenta)">✕</button>` : ""}
+      ${isAdmin ? `<button class="btn btn-sm btn-ghost todo-del btn-danger" data-tid="${t.id}" title="Remove to-do" aria-label="Remove to-do">✕</button>` : ""}
     </li>`;
 
   box.innerHTML = `
@@ -12940,7 +13494,7 @@ async function viewBoardMeeting(id) {
         <button class="btn btn-ghost btn-sm btn-ink" id="mtg-dsa" title="Board meetings are registered on dsa.ugent.be automatically as a private 'Vergadering' (only visible to board, konvent & DSA). Click to switch this meeting's DSA registration on/off.">${mi("school")} DSA: ${m.dsaSync !== false ? "on" : "off"}</button>
         ${m.dsaActivityId ? `<a href="https://dsa.ugent.be/activiteiten/${m.dsaActivityId}" target="_blank" rel="noopener" class="btn btn-ghost btn-sm btn-ink" title="This meeting's activity on the UGent DSA site">Open in DSA ↗</a>` : ""}
         <button class="btn btn-ghost btn-sm btn-ink" id="mtg-edit">Edit details</button>
-        <button class="btn btn-ghost btn-sm" id="mtg-del" style="color:var(--esn-magenta)">Delete</button>` : ""}
+        <button class="btn btn-ghost btn-danger btn-sm" id="mtg-del">Delete</button>` : ""}
       ${isAdmin && !m.approvedAt && toDate(m.start) < new Date() ? `<button class="btn btn-green btn-sm" id="mtg-approve">${mi("check_circle")} Mark minutes approved</button>` : ""}
       ${locked && myRole === "superadmin" ? `<button class="btn btn-ghost btn-sm btn-ink" id="mtg-reopen">Reopen minutes</button>` : ""}
     </div>
@@ -13696,7 +14250,7 @@ async function viewAdminShifts(eventId) {
       <div class="form-card shift-form-card ${editing ? "editing" : ""}" style="margin-bottom:18px">
         <div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap">
           <strong>${editing ? `Editing: ${esc(editing.task)}` : "Add a shift"}</strong>
-          ${editing ? `<button class="btn btn-ghost btn-sm btn-ink" id="sh-cancel">Cancel editing</button>` : ""}
+          ${editing ? `<button class="btn btn-ghost btn-sm btn-danger" id="sh-cancel">Cancel editing</button>` : ""}
         </div>
         <div class="shift-form">
           <div class="form-field"><label for="sh-task">Task *</label><input id="sh-task" list="shift-tasks" maxlength="60" placeholder="e.g. BAR" value="${esc(editing?.task || "")}" /></div>
@@ -13714,7 +14268,7 @@ async function viewAdminShifts(eventId) {
               ${templates.map((t) => `<option value="${t.id}">${esc(t.name)} (${(t.shifts || []).length})</option>`).join("")}
             </select>
             <button class="btn btn-ghost btn-sm btn-ink" id="sh-tpl-apply">Apply</button>
-            <button class="btn btn-ghost btn-sm" id="sh-tpl-del" style="color:var(--esn-magenta)" title="Delete the selected template">✕</button>
+            <button class="btn btn-ghost btn-danger btn-sm" id="sh-tpl-del" title="Delete the selected template">✕</button>
             ${shifts.length ? `<button class="btn btn-ghost btn-sm btn-ink" id="sh-tpl-save">${mi("bookmark_add", "sm")} Save this list as a template…</button>` : ""}
             <span class="form-hint">Board-managed templates (Party, Therminal event, Cantus, …) - applying adds tasks, times &amp; spots, never the names.</span>
           </div>` : ""}
@@ -14017,7 +14571,7 @@ async function viewReimburse() {
               <td data-l="Date">${esc(r.expenseDate || "-")}</td>
               <td data-l="Amount">${fmtMoney(r.amount)}</td>
               <td data-l="Status">${reimbBadge(r.status)}${r.status === "paid" && r.paidAt ? `<br><small class="form-hint">${fmtDate(r.paidAt)}</small>` : ""}</td>
-              <td class="card-actions">${r.status === "submitted" ? `<button class="btn btn-sm btn-ghost rb-withdraw" data-rid="${r.id}" style="color:var(--esn-magenta)">Withdraw</button>` : ""}</td>
+              <td class="card-actions">${r.status === "submitted" ? `<button class="btn btn-sm btn-ghost rb-withdraw btn-danger" data-rid="${r.id}">Withdraw</button>` : ""}</td>
             </tr>`).join("")}</tbody>
         </table></div>`
       : `<div class="empty-state"><p>No requests yet.</p></div>`}
@@ -14194,7 +14748,7 @@ async function viewAdminReimbursements(yearSel = ayStartYear()) {
               <td class="card-actions">
                 <button class="btn btn-sm btn-green tr-approve" data-tid="${t.id}">Approve &amp; refund</button>
                 <button class="btn btn-sm btn-ghost btn-ink tr-partial" data-tid="${t.id}">Partial…</button>
-                <button class="btn btn-sm btn-ghost tr-reject" data-tid="${t.id}" style="color:var(--esn-magenta)">Reject</button>
+                <button class="btn btn-sm btn-ghost tr-reject btn-danger" data-tid="${t.id}">Reject</button>
               </td>
             </tr>`).join("")}</tbody>
         </table></div>`
@@ -14240,8 +14794,8 @@ async function viewAdminReimbursements(yearSel = ayStartYear()) {
               <td class="card-actions">
                 ${r.status === "submitted" ? `<button class="btn btn-sm btn-cyan rb-approve" data-rid="${r.id}">Approve</button>` : ""}
                 ${r.status === "approved" ? `<button class="btn btn-sm btn-green rb-paid" data-rid="${r.id}">Mark paid</button>` : ""}
-                ${(r.status === "submitted" || r.status === "approved") ? `<button class="btn btn-sm btn-ghost rb-reject" data-rid="${r.id}" style="color:var(--esn-magenta)">Reject</button>` : ""}
-                ${(r.status === "paid" || r.status === "rejected") ? `<button class="btn btn-sm btn-ghost rb-del" data-rid="${r.id}" title="Remove request" aria-label="Remove request" style="color:var(--esn-magenta)">✕</button>` : ""}
+                ${(r.status === "submitted" || r.status === "approved") ? `<button class="btn btn-sm btn-ghost rb-reject btn-danger" data-rid="${r.id}">Reject</button>` : ""}
+                ${(r.status === "paid" || r.status === "rejected") ? `<button class="btn btn-sm btn-ghost rb-del btn-danger" data-rid="${r.id}" title="Remove request" aria-label="Remove request">✕</button>` : ""}
               </td>
             </tr>`).join("")}</tbody>
         </table></div>
