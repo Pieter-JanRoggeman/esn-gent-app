@@ -54,8 +54,13 @@ try {
 // Version & changelog. Bump APP_VERSION and add an entry on every
 // deploy - everyone sees the number, staff see the details.
 // ------------------------------------------------------------
-const APP_VERSION = "1.4.0";
+const APP_VERSION = "1.4.1";
 const CHANGELOG = [
+  {
+    version: "1.4.1",
+    date: "2026-09-05",
+    notes: ["Fixes the 1.4.0 release, which didn't load at all (a broken line in the code - sorry). Everything below is what 1.4.0 brought."],
+  },
   {
     version: "1.4.0",
     date: "2026-09-05",
@@ -945,7 +950,7 @@ function locationPickerHtml(prefix, lat, lng) {
     <div class="form-actions" style="margin:6px 0 0;align-items:center">
       <button type="button" class="btn btn-sm btn-ghost btn-ink" id="${prefix}-geo">${mi("location_on", "sm")} Pin on map</button>
       <span class="form-hint" id="${prefix}-geo-status">${pinned ? `Pinned ✓` : "Optional - type the place, hit Enter or this button, pick the match."}</span>
-      <button type="button" class="btn btn-sm btn-ghost ${pinned ?  btn-danger"" : "hidden"}" id="${prefix}-geo-clear">✕ remove pin</button>
+      <button type="button" class="btn btn-sm btn-ghost btn-danger ${pinned ? "" : "hidden"}" id="${prefix}-geo-clear">✕ remove pin</button>
     </div>
     <div id="${prefix}-geo-results"></div>`;
 }
@@ -10477,7 +10482,7 @@ async function viewAdminMerchForm(productId) {
           <div class="img-upload-row">
             <img id="m-image-preview" class="img-preview ${p?.image ? "" : "hidden"}" src="${esc(p?.image || "")}" alt="" />
             <input id="m-image-file" type="file" accept="image/*" />
-            <button type="button" id="m-image-remove" class="btn btn-ghost btn-sm ${p?.image ?  btn-danger"" : "hidden"}">Remove photo</button>
+            <button type="button" id="m-image-remove" class="btn btn-ghost btn-sm btn-danger ${p?.image ? "" : "hidden"}">Remove photo</button>
           </div>
         </div>
         <div class="form-field">
@@ -12078,7 +12083,7 @@ async function viewAdminEventForm(eventId, dupFromId) {
             <div class="img-upload-row">
               <img id="f-image-preview" class="img-preview ${f?.image ? "" : "hidden"}" src="${esc(f?.image || "")}" alt="" />
               <input id="f-image-file" type="file" accept="image/*" />
-              <button type="button" id="f-image-remove" class="btn btn-ghost btn-sm ${f?.image ?  btn-danger"" : "hidden"}">Remove photo</button>
+              <button type="button" id="f-image-remove" class="btn btn-ghost btn-sm btn-danger ${f?.image ? "" : "hidden"}">Remove photo</button>
             </div>
           </div>
           <div class="form-field">
