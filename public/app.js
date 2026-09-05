@@ -54,10 +54,22 @@ try {
 // Version & changelog. Bump APP_VERSION and add an entry on every
 // deploy - everyone sees the number, staff see the details.
 // ------------------------------------------------------------
-const APP_VERSION = "1.5.0";
+const APP_VERSION = "1.1.6";
 const CHANGELOG = [
   {
-    version: "1.5.0",
+    version: "1.1.6",
+    date: "2026-09-06",
+    notes: [
+      "Moving between pages keeps the current page on screen with a slim progress bar under the header - the dragon only appears on a cold start.",
+      "Home shows a 'This week' strip you can scroll through to jump straight to an event.",
+      "Light/dark toggle in the header on desktop; icons in the desktop menu; passport badges are now drawn with the same icons as the rest of the app.",
+      "Board: the queue has a status legend under 'More filters', 'to pick up' is cyan so orange always means money, 'Last seen' hides on smaller laptops, the members map also counts nationalities from applications, and news posts can be pinned to the top.",
+      "Account: the passport level line under your card is half the height.",
+      "Version numbers slow down: fixes and polish are 1.1.x from now on, a new minor number is for real feature releases.",
+    ],
+  },
+  {
+    version: "1.1.5",
     date: "2026-09-06",
     notes: [
       "Look & feel pass: tighter, consistent spacing between cards on every page (less on phones), every page title has its icon, bigger touch targets on phones, and event tags with a light colour now get dark text instead of white-on-yellow.",
@@ -68,12 +80,12 @@ const CHANGELOG = [
     ],
   },
   {
-    version: "1.4.1",
+    version: "1.1.4",
     date: "2026-09-05",
-    notes: ["Fixes the 1.4.0 release, which didn't load at all (a broken line in the code - sorry). Everything below is what 1.4.0 brought."],
+    notes: ["Fixes the previous release, which didn't load at all (a broken line in the code - sorry). Everything below is what it brought."],
   },
   {
-    version: "1.4.0",
+    version: "1.1.3",
     date: "2026-09-05",
     notes: [
       "Board: the ESNcard queue is built for speed. It opens on To assign (everyone who paid, oldest payment first), unpaid applications live under Office, Details under a name unfolds the submission instead of taking a row, Enter in the card field assigns and jumps to the next student, filters stay pinned while you scroll.",
@@ -84,7 +96,7 @@ const CHANGELOG = [
     ],
   },
   {
-    version: "1.3.0",
+    version: "1.1.2",
     date: "2026-09-05",
     notes: [
       "Board: the ESNcards tab is now Users, with two sub-tabs. ESNcard is the office-hours work queue - it opens on everything that still needs a hand (unpaid, to assign, to pick up), shows the time of each submission and filters by institution, nationality, type of stay, payment, proof and arrival month. Users lists every account with colour-coded institutions, team and alumni flags, and filters by institution, nationality and role.",
@@ -93,7 +105,7 @@ const CHANGELOG = [
     ],
   },
   {
-    version: "1.2.0",
+    version: "1.1.1",
     date: "2026-09-05",
     notes: [
       "ESNcard form: tell us from which month to which month you're in Ghent (leave the end open if you don't know yet), pick your home country and city from a list, and whenever you choose 'Other' you can say what it is. The passport/ID number question is gone.",
@@ -875,6 +887,7 @@ function applyTheme() {
   const dark = pref ? pref === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches;
   document.documentElement.dataset.theme = dark ? "dark" : "light";
   document.querySelector('meta[name="theme-color"]')?.setAttribute("content", dark ? "#12132a" : "#2E3192");
+  if (typeof syncThemeToggle === "function") syncThemeToggle();
 }
 applyTheme();
 window.matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", () => {
@@ -1872,6 +1885,8 @@ async function viewNews() {
   try {
     posts = (await getDocs(query(collection(db, "news"), orderBy("createdAt", "desc"), limit(30))))
       .docs.map((d) => ({ id: d.id, ...d.data() }));
+    // Pinned posts stay on top (v1.1.6), then newest first.
+    posts.sort((a, b) => (b.pinned === true) - (a.pinned === true));
   } catch (e) { $app.innerHTML = errorState(e.message); return; }
 
   const render = () => {
@@ -1887,7 +1902,7 @@ async function viewNews() {
       <article class="form-card news-card ${i === 0 ? "news-latest" : ""}" id="news-${n.id}">
         ${n.image ? `<img class="news-cover" src="${esc(n.image)}" alt="" loading="lazy" />` : ""}
         <div class="news-body">
-          <p class="news-meta">${mi("schedule", "sm")} ${fmtDate(n.createdAt)}${n.authorName ? ` · ${esc(n.authorName.split(" ")[0])}` : ""}${i === 0 ? ` <span class="badge badge-esn">latest</span>` : ""}</p>
+          <p class="news-meta">${mi("schedule", "sm")} ${fmtDate(n.createdAt)}${n.authorName ? ` · ${esc(n.authorName.split(" ")[0])}` : ""}${n.pinned ? ` <span class="badge badge-esn">${mi("push_pin", "sm")} pinned</span>` : i === 0 ? ` <span class="badge badge-esn">latest</span>` : ""}</p>
           <h3 class="news-title">${esc(n.title || "")}</h3>
           <div class="rich">${renderRich(n.body || "")}</div>
           <div class="form-actions" style="margin-top:12px">
@@ -1916,6 +1931,7 @@ async function viewNews() {
               <input id="nw-image" type="file" accept="image/*" />
               ${existing?.image ? `<label class="checkbox-row" style="margin-top:6px"><input type="checkbox" id="nw-image-remove" /> Remove current image</label>` : ""}</div>
           </div>
+          <label class="checkbox-row" style="margin-top:4px"><input type="checkbox" id="nw-pinned" ${existing?.pinned ? "checked" : ""} /> Pin to the top of the news page ${hintIcon("Pinned posts stay first, in front of newer ones - for the Welcome Week programme, an important date, … Unpin when it's over.")}</label>
           <div class="form-actions">
             <button class="btn btn-green btn-sm" id="nw-save">${existing ? "Save changes" : `${mi("campaign", "sm")} Publish (sends push)`}</button>
             <button class="btn btn-ghost btn-sm btn-danger" id="nw-cancel">Cancel</button>
@@ -1936,6 +1952,7 @@ async function viewNews() {
             body: document.getElementById("nw-body").value.trim(),
             url: document.getElementById("nw-url").value.trim() || null,
             image,
+            pinned: document.getElementById("nw-pinned")?.checked === true,
             authorName: currentUser.displayName || "",
             updatedAt: serverTimestamp(),
           };
@@ -2675,28 +2692,28 @@ async function viewPassport() {
   }).filter(Boolean)).size;
 
   const BADGES = [
-    ["🎉", "First stamp", "Attend your first event", stamps.length >= 1],
+    ["celebration", "First stamp", "Attend your first event", stamps.length >= 1],
     // Attendance TIERS as ONE badge (v0.116): shows the tier you're on and
     // how many events to the next one - replaced 4 separate cards.
     // Tuple index 5 = progress fraction → renders a mini progress bar.
     ...(() => {
-      const TIERS = [[3, "🔥", "Warming up"], [5, "⭐", "Regular"], [10, "💜", "Die-hard ESNer"], [20, "🏆", "Legend"]];
+      const TIERS = [[3, "local_fire_department", "Warming up"], [5, "star", "Regular"], [10, "favorite", "Die-hard ESNer"], [20, "emoji_events", "Legend"]];
       const n = stamps.length;
       const cur = [...TIERS].reverse().find(([k]) => n >= k) || null;
       const nxt = TIERS.find(([k]) => n < k) || null;
       const how = nxt
         ? `${n}/${nxt[0]} events - ${nxt[0] - n} more to ${nxt[2]}`
         : `${n} events - every tier unlocked`;
-      return [[cur ? cur[1] : "🔥", cur ? cur[2] : "Warming up", how, !!cur, false, nxt ? Math.min(1, n / nxt[0]) : 1]];
+      return [[cur ? cur[1] : "local_fire_department", cur ? cur[2] : "Warming up", how, !!cur, false, nxt ? Math.min(1, n / nxt[0]) : 1]];
     })(),
-    ["🦉", "Night owl", "Attend an event starting after 22:00", stamps.some((r) => hour(r) >= 22)],
-    ["🌅", "Early bird", "Attend an event starting before 10:00", stamps.some((r) => hour(r) < 10)],
-    ["✈️", "Globetrotter", "Join a trip", stamps.some(isTrip)],
-    ["🏃", "Marathon", "3 events within one week", marathon],
-    ["📅", "Season pass", "Active in 3 different months", monthsActive >= 3],
-    ["🎫", "Visa collector", "Collect 3 visas", visasEarned.length >= 3],
-    ["💬", "Feedback friend", "Rate 3 events afterwards", myRatings >= 3],
-    ["🗺️", "Ghent Explorer", "Complete a whole bucketlist section", sectionComplete],
+    ["bedtime", "Night owl", "Attend an event starting after 22:00", stamps.some((r) => hour(r) >= 22)],
+    ["wb_twilight", "Early bird", "Attend an event starting before 10:00", stamps.some((r) => hour(r) < 10)],
+    ["flight", "Globetrotter", "Join a trip", stamps.some(isTrip)],
+    ["directions_run", "Marathon", "3 events within one week", marathon],
+    ["calendar_month", "Season pass", "Active in 3 different months", monthsActive >= 3],
+    ["confirmation_number", "Visa collector", "Collect 3 visas", visasEarned.length >= 3],
+    ["rate_review", "Feedback friend", "Rate 3 events afterwards", myRatings >= 3],
+    ["map", "Ghent Explorer", "Complete a whole bucketlist section", sectionComplete],
     // ---- secret badges (v0.109) - shown as ??? until earned ----
     // firstIn / lastIn are written server-side (check-in trigger + nightly).
     ...(() => {
@@ -2705,10 +2722,10 @@ async function viewPassport() {
         return a && b ? (a.getTime() - b.getTime()) / 60000 : null;
       };
       return [
-        ["🥇", "First through the door", "Be the very first person scanned at an event", stamps.some((r) => r.firstIn === true), true],
-        ["🌙", "Closed the party", "Be the last person scanned at an event (5+ attendees)", stamps.some((r) => r.lastIn === true), true],
-        ["🐢", "Fashionably late", "Check in more than 90 minutes after an event started", stamps.some((r) => { const d2 = delayMin(r); return d2 != null && d2 >= 90 && d2 <= 300; }), true],
-        ["⚡", "Keen bean", "Check in before an event even officially started", stamps.some((r) => { const d2 = delayMin(r); return d2 != null && d2 < 0 && d2 >= -120; }), true],
+        ["door_open", "First through the door", "Be the very first person scanned at an event", stamps.some((r) => r.firstIn === true), true],
+        ["nightlife", "Closed the party", "Be the last person scanned at an event (5+ attendees)", stamps.some((r) => r.lastIn === true), true],
+        ["hourglass_bottom", "Fashionably late", "Check in more than 90 minutes after an event started", stamps.some((r) => { const d2 = delayMin(r); return d2 != null && d2 >= 90 && d2 <= 300; }), true],
+        ["bolt", "Keen bean", "Check in before an event even officially started", stamps.some((r) => { const d2 = delayMin(r); return d2 != null && d2 < 0 && d2 >= -120; }), true],
       ];
     })(),
   ];
@@ -2720,19 +2737,19 @@ async function viewPassport() {
   const officeDone = shiftsDone.filter((s) => s.officeHours === true);
   const shiftsThisAY = shiftsDone.filter((s) => toDate(s.eventStart) >= ayFrom);
   const TEAM_BADGES = teamSide ? [
-    ["🤝", "First shift", "Work your first shift", shiftsDone.length >= 1],
+    ["handshake", "First shift", "Work your first shift", shiftsDone.length >= 1],
     // Shift TIERS as one badge (v0.116) - same pattern as attendance.
     ...(() => {
-      const TIERS = [[5, "💪", "Reliable hands"], [15, "🦸", "Backbone of ESN"]];
+      const TIERS = [[5, "fitness_center", "Reliable hands"], [15, "shield", "Backbone of ESN"]];
       const n = shiftsDone.length;
       const cur = [...TIERS].reverse().find(([k]) => n >= k) || null;
       const nxt = TIERS.find(([k]) => n < k) || null;
       const how = nxt ? `${n}/${nxt[0]} shifts - ${nxt[0] - n} more to ${nxt[2]}` : `${n} shifts - every tier unlocked`;
-      return [[cur ? cur[1] : "💪", cur ? cur[2] : "Reliable hands", how, !!cur, false, nxt ? Math.min(1, n / nxt[0]) : 1]];
+      return [[cur ? cur[1] : "fitness_center", cur ? cur[2] : "Reliable hands", how, !!cur, false, nxt ? Math.min(1, n / nxt[0]) : 1]];
     })(),
-    ["🗝️", "Office hero", "5 office shifts", officeDone.length >= 5, false, Math.min(1, officeDone.length / 5)],
-    ["🧭", "On the team", "Hold a role in ESN Gent", !!myRole],
-    ["🎓", "Once ESN, always ESN", "Alumni of ESN Gent", isAlumni()],
+    ["key", "Office hero", "5 office shifts", officeDone.length >= 5, false, Math.min(1, officeDone.length / 5)],
+    ["explore", "On the team", "Hold a role in ESN Gent", !!myRole],
+    ["school", "Once ESN, always ESN", "Alumni of ESN Gent", isAlumni()],
   ] : [];
   const teamEarned = TEAM_BADGES.filter((b) => b[3]).length;
   const myCountry = (myProfile && myProfile.nationality) || "";
@@ -2818,7 +2835,7 @@ async function viewPassport() {
         ${visaData.map((v) => {
           const icon = v.tag.icon || iconForName(v.tag.name);
           const rank = visaRank.get(v.tag.name);
-          const medal = rank ? ["🥇", "🥈", "🥉"][rank - 1] : "";
+          const medal = rank ? `<span class="medal medal-${rank}" title="#${rank} visa">${mi("workspace_premium", "sm")}</span>` : "";
           const cat = v.tag.color || "#2E3192";
           const tierColor = v.tier ? v.tier.color : "rgba(128,128,160,.35)";
           const nextTxt = v.next
@@ -2845,12 +2862,12 @@ async function viewPassport() {
       <div class="badge-grid">
         ${BADGES.map(([icon, name, how, got, secret, prog]) => (secret && !got ? `
         <div class="pp-badge" title="Secret badge - earn it to find out">
-          <span class="pp-badge-icon">❓</span>
+          <span class="pp-badge-icon is-secret">${mi("question_mark")}</span>
           <strong>???</strong>
           <small>Secret badge - earn it to find out</small>
         </div>` : `
         <div class="pp-badge ${got ? "earned" : ""}" title="${esc(how)}">
-          <span class="pp-badge-icon">${got ? icon : "🔒"}</span>
+          <span class="pp-badge-icon ${got ? "" : "is-locked"}">${mi(got ? icon : "lock")}</span>
           <strong>${esc(name)}</strong>
           <small>${esc(how)}</small>
           ${prog != null ? `<span class="pp-badge-bar"><i style="width:${Math.round(prog * 100)}%"></i></span>` : ""}
@@ -2907,7 +2924,7 @@ async function viewPassport() {
         <div class="badge-grid">
           ${TEAM_BADGES.map(([icon, name, how, got, , prog]) => `
           <div class="pp-badge ${got ? "earned" : ""}" title="${esc(how)}">
-            <span class="pp-badge-icon">${got ? icon : "🔒"}</span>
+            <span class="pp-badge-icon ${got ? "" : "is-locked"}">${mi(got ? icon : "lock")}</span>
             <strong>${esc(name)}</strong>
             <small>${esc(how)}</small>
             ${prog != null ? `<span class="pp-badge-bar"><i style="width:${Math.round(prog * 100)}%"></i></span>` : ""}
@@ -3991,6 +4008,9 @@ function fmtDate(d) {
     weekday: "short", day: "numeric", month: "short", year: "numeric", timeZone: TZ_BE,
   }) ?? "";
 }
+function weekdayShort(d) {
+  return toDate(d)?.toLocaleDateString("en-GB", { weekday: "short", timeZone: TZ_BE }) ?? "";
+}
 function fmtTime(d) {
   return toDate(d)?.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: TZ_BE }) ?? "";
 }
@@ -4126,15 +4146,32 @@ const DRAGON_SVG = document.getElementById("dragon-boot")?.innerHTML || "";
 function dragonHtml(cls = "") {
   return DRAGON_SVG ? `<div class="dragon-wrap ${cls}">${DRAGON_SVG}</div>` : `<div class="spinner"></div>`;
 }
+// In-app navigation (v1.1.6): the current page stays visible and dimmed
+// with a thin progress bar under the header; the dragon only shows when
+// there is nothing on screen yet (cold start / deep link) or a load drags
+// on for seconds.
+const navBar = (() => {
+  const el = document.createElement("div");
+  el.id = "nav-progress"; el.setAttribute("aria-hidden", "true");
+  document.body.appendChild(el);
+  let hideTimer = null;
+  return {
+    start() { clearTimeout(hideTimer); el.classList.remove("done"); void el.offsetWidth; el.classList.add("on"); },
+    finish() { if (!el.classList.contains("on")) return; el.classList.add("done"); hideTimer = setTimeout(() => el.classList.remove("on", "done"), 400); },
+  };
+})();
 function setLoading() {
   clearTimeout(loadingTimer);
   $app.classList.add("is-loading");
+  navBar.start();
+  const empty = !$app.textContent.trim() || $app.querySelector(".loading");
   loadingTimer = setTimeout(() => {
     $app.innerHTML = `<div class="loading">${dragonHtml()}<p>Loading…</p></div>`;
-  }, 350);
+  }, empty ? 0 : 2500);
 }
 new MutationObserver(() => {
   $app.classList.remove("is-loading");
+  navBar.finish();
   if (loadingTimer) { clearTimeout(loadingTimer); loadingTimer = null; }
 }).observe($app, { childList: true });
 function ticketsLeft(ev) {
@@ -4628,6 +4665,13 @@ async function viewHome() {
       </span>
       <span class="chev">›</span>
     </a>`).join("")}
+    ${thisWeek.length ? `
+    <div class="week-strip">
+      <span class="week-label">${mi("date_range", "sm")} This week</span>
+      <div class="week-scroll">
+        ${thisWeek.filter((ev) => !ev.cancelled).slice(0, 8).map((ev) => `<a class="week-chip" href="/event/${ev.id}" style="--wc:${eventAccent(ev)}"><small>${esc(weekdayShort(ev.start))} · ${fmtTime(ev.start)}</small><strong>${esc(ev.title || "")}</strong></a>`).join("")}
+      </div>
+    </div>` : ""}
     <h2 class="section-title">${mi("event")} Upcoming events</h2>
     <div class="filter-bar">
       <input id="filter-q" type="search" placeholder="Search events, places…" value="${esc(homeFilter.q)}" />
@@ -7431,9 +7475,8 @@ async function viewAccount() {
             <i style="background:${ppMeta.color}">${ppLvl}</i>
           </span>
           <span class="pp-strip-main">
-            <strong style="color:${ppMeta.color}">Level ${ppLvl} - ${esc(ppMeta.name)}</strong>
+            <strong><span style="color:${ppMeta.color}">Level ${ppLvl} · ${esc(ppMeta.name)}</span> <small>${ppXp} XP${ppNext ? ` · ${ppNext.xp - ppXp} to ${esc(ppNext.name)}` : " · max"}</small></strong>
             <span class="pp-strip-bar"><i style="width:${Math.round(ppFrac * 100)}%;background:${ppMeta.color}"></i></span>
-            <small>${ppXp} XP${ppNext ? ` · ${ppNext.xp - ppXp} XP to ${esc(ppNext.name)}` : " · max level"} - tap for your ESN Passport</small>
           </span>
           <span class="chev">›</span>
         </div>
@@ -8521,7 +8564,7 @@ async function viewAdminUserDetail(uid) {
         <summary class="form-hint" style="cursor:pointer">${mi("history", "sm")} <strong>${x.submittedAt ? `${fmtDate(x.submittedAt)} ${fmtTime(x.submittedAt)}` : "-"}</strong> · ${esc(KIND_LABEL[x.kind] || x.kind || "submission")}${x.payChoice ? ` · ${x.payChoice === "cash" ? "wants to pay cash" : x.payChoice === "online" ? "went to online payment" : "free card"}` : ""}${x.version ? ` <small>(app ${esc(x.version)})</small>` : ""}</summary>
         ${applicationFieldsHtml(x)}
       </details>`).join("")
-      : `<p class="form-hint" style="margin:0">No snapshot of the form yet - snapshots are kept from v1.3.0 onwards, so only submissions made after that show up here.</p>`;
+      : `<p class="form-hint" style="margin:0">No snapshot of the form yet - snapshots are kept since 5 September 2026, so only submissions made after that show up here.</p>`;
     return `
     <h3 class="section-title sm">ESNcard submissions</h3>
     <div class="form-card">
@@ -10777,6 +10820,18 @@ async function viewAdminMembers(yearSel = ayStartYear()) {
     ]);
   } catch (e) { $app.innerHTML = errorState(e.message); return; }
 
+  // Map + nationality counts: a profile that never set a nationality still
+  // has one on its ESNcard application - use it, and include applicants
+  // who haven't signed in this year.
+  const appByUid = Object.fromEntries(applications.map((a) => [a.uid, a]));
+  const seen = new Set(users.map((u) => u.id));
+  const natUsers = [
+    ...users.map((u) => ({ ...u, nationality: u.nationality || appByUid[u.id]?.nationality || "" })),
+    ...applications.filter((a) => !seen.has(a.uid) && a.anonymized !== true).map((a) => ({
+      id: a.uid, displayName: `${a.firstName || ""} ${a.lastName || ""}`.trim() || a.email || "", email: a.email || "",
+      nationality: a.nationality || "", esncardVerified: a.status === "active",
+    })),
+  ];
   const activeCards = applications.filter((a) => a.status === "active");
   const pickedUp = activeCards.filter((a) => a.pickedUpAt).length;
   const openApps = applications.filter((a) => a.status === "applied" || a.status === "paid").length;
@@ -10788,7 +10843,7 @@ async function viewAdminMembers(yearSel = ayStartYear()) {
   };
   const byUni = countBy(activeCards, (a) => a.hostInstitution);
   const byCountry = countBy(activeCards, (a) => a.nationality);
-  const natCounts = countBy(users, (u) => u.nationality);
+  const natCounts = countBy(natUsers, (u) => u.nationality);
 
   const countTable = (rows, colName, total) => {
     if (!rows.length) return `<p class="form-hint">No active cards yet - this fills up as cards are assigned.</p>`;
@@ -10856,9 +10911,9 @@ async function viewAdminMembers(yearSel = ayStartYear()) {
     <p class="form-hint" style="margin-top:14px">Counts come from <strong>active</strong> ESNcards (assigned card numbers). The pipeline itself lives under <a href="/admin/users">Users → ESNcard</a>.</p>
   `;
 
-  renderNationalityMap(users, (name) => {
+  renderNationalityMap(natUsers, (name) => {
     const box = document.getElementById("country-members");
-    const list = users.filter((u) => u.nationality === name)
+    const list = natUsers.filter((u) => u.nationality === name)
       .sort((a, b) => (a.displayName || "").localeCompare(b.displayName || ""));
     box.innerHTML = `
       <div class="form-card">
@@ -11107,8 +11162,16 @@ async function viewAdminUsers(yearSel = ayStartYear(), allUsers = false, tab = "
         <div class="filter-chips" id="apps-chips"></div>
       </div>
       <details class="form-optional" id="apps-more-filters">
-        <summary class="form-hint" style="cursor:pointer">More filters</summary>
+        <summary class="form-hint" style="cursor:pointer">More filters &amp; legend</summary>
         <div class="filter-selects" id="apps-selects" style="margin-top:8px"></div>
+        <p class="form-hint legend" style="margin:8px 0 0">
+          <span class="badge badge-requested">unpaid</span> waiting for money (online or at the desk) ·
+          <span class="badge badge-paid">paid online</span> / <span class="badge badge-paid">paid cash</span> ready for a card number ·
+          <span class="badge badge-esn">free · team</span> no payment step ·
+          <span class="badge badge-cyan">to pick up</span> card assigned, not handed over ·
+          <span class="badge badge-paid">picked up</span> done ·
+          <span class="badge badge-soldout">rejected</span> student can fix &amp; resubmit
+        </p>
       </details>
     </div>
     <div class="form-actions" style="margin:0 0 10px">
@@ -11154,7 +11217,7 @@ async function viewAdminUsers(yearSel = ayStartYear(), allUsers = false, tab = "
   };
   const statusBadge = (x) => {
     const price = x.price ?? cardPricing.student;
-    if (x.status === "active") return `<span class="badge badge-paid">active</span>${x.pickedUpAt ? ` <span class="badge badge-paid" title="Handed over ${fmtDate(x.pickedUpAt)}">picked up</span>` : ` <span class="badge badge-requested">to pick up</span>`}<br><small class="form-hint"><code>${esc(x.cardNumber || "")}</code>${x.expiresAt ? ` · until ${fmtDate(x.expiresAt)}` : ""}</small>`;
+    if (x.status === "active") return `<span class="badge badge-paid">active</span>${x.pickedUpAt ? ` <span class="badge badge-paid" title="Handed over ${fmtDate(x.pickedUpAt)}">picked up</span>` : ` <span class="badge badge-cyan">to pick up</span>`}<br><small class="form-hint"><code>${esc(x.cardNumber || "")}</code>${x.expiresAt ? ` · until ${fmtDate(x.expiresAt)}` : ""}</small>`;
     if (x.status === "paid") return `<span class="badge badge-paid">paid ${x.paidOnline ? "online" : "cash"}</span>${x.paidAt ? `<br><small class="form-hint">${fmtDate(x.paidAt)} ${fmtTime(x.paidAt)}</small>` : ""}`;
     if (x.status === "rejected") return `<span class="badge badge-soldout">rejected${x.refunded ? " · refunded" : ""}</span>${x.declineReason ? `<br><small class="form-hint">${esc(x.declineReason)}</small>` : ""}`;
     return price === 0 ? `<span class="badge badge-esn">free · team</span>` : `<span class="badge badge-requested">unpaid</span>`;
@@ -11452,7 +11515,7 @@ async function viewAdminUsers(yearSel = ayStartYear(), allUsers = false, tab = "
       <td class="card-main"><a href="/admin/user-${u.id}"><strong>${esc(u.displayName || "-")}</strong></a><br><small class="form-hint">${esc(u.email || "")}</small>${roleBadge(u)}</td>
       <td data-l="Institution">${instChip(u.hostInstitution)}</td>
       <td data-l="Nationality">${esc(u.nationality || "-")}</td>
-      <td data-l="Last seen" style="white-space:nowrap">${u.lastLogin ? fmtDate(u.lastLogin) : "-"}</td>
+      <td data-l="Last seen" class="col-wide" style="white-space:nowrap">${u.lastLogin ? fmtDate(u.lastLogin) : "-"}</td>
       <td data-l="ESNcard">${u.esncardCode ? `<code style="font-size:.85rem">${esc(u.esncardCode)}</code>` : `<span class="form-hint">-</span>`}</td>
       <td data-l="Status">${userCardBadge(u)}</td>
       <td style="white-space:nowrap" class="card-actions">
@@ -11514,7 +11577,7 @@ async function viewAdminUsers(yearSel = ayStartYear(), allUsers = false, tab = "
     const box = document.getElementById("users-box");
     box.innerHTML = shown.length ? `
       <div class="table-wrap cards"><table>
-        <thead><tr><th>Name</th><th>Institution</th><th>Nationality</th><th>Last seen</th><th>ESNcard code</th><th>Card status</th><th></th></tr></thead>
+        <thead><tr><th>Name</th><th>Institution</th><th>Nationality</th><th class="col-wide">Last seen</th><th>ESNcard code</th><th>Card status</th><th></th></tr></thead>
         <tbody>${shown.map(userRowHtml).join("")}</tbody>
       </table></div>
       ${list.length > shown.length ? `<div class="form-actions"><button class="btn btn-ghost btn-ink" id="users-more">Show more (${list.length - shown.length} left)</button></div>` : ""}`
@@ -15204,6 +15267,25 @@ const betaBanner = document.getElementById("beta-banner");
   const stamp = cfg.updatedAt?.toMillis ? cfg.updatedAt.toMillis() : "x";
   show(`banner-dismissed-${stamp}`, cfg.dismissible !== false);
 })();
+// Header theme toggle (v1.1.6): one click flips light/dark; the three-way
+// setting (incl. "follow device") stays under Account → Appearance.
+function syncThemeToggle() {
+  const b = document.getElementById("btn-theme-top");
+  if (!b) return;
+  const dark = document.documentElement.dataset.theme === "dark";
+  b.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">${dark ? "light_mode" : "dark_mode"}</span>`;
+  b.title = dark ? "Switch to light mode" : "Switch to dark mode";
+}
+document.getElementById("btn-theme-top")?.addEventListener("click", () => {
+  setThemePref(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
+  applyTheme();
+  const lbl = document.getElementById("theme-label");
+  if (lbl) lbl.textContent = themePref() === "dark" ? "Dark" : "Light";
+});
+syncThemeToggle();
+const setHeaderVar = () => { try { document.documentElement.style.setProperty("--hdr", `${document.querySelector(".site-header")?.offsetHeight || 0}px`); } catch { /* cosmetic */ } };
+setHeaderVar();
+window.addEventListener("resize", setHeaderVar);
 const footerYear = document.getElementById("footer-year");
 if (footerYear) footerYear.textContent = new Date().getFullYear();
 document.getElementById("btn-signin").onclick = signIn;
