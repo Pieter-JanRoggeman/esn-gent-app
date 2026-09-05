@@ -54,8 +54,19 @@ try {
 // Version & changelog. Bump APP_VERSION and add an entry on every
 // deploy - everyone sees the number, staff see the details.
 // ------------------------------------------------------------
-const APP_VERSION = "1.4.1";
+const APP_VERSION = "1.5.0";
 const CHANGELOG = [
+  {
+    version: "1.5.0",
+    date: "2026-09-06",
+    notes: [
+      "Look & feel pass: tighter, consistent spacing between cards on every page (less on phones), every page title has its icon, bigger touch targets on phones, and event tags with a light colour now get dark text instead of white-on-yellow.",
+      "News is a proper feed: the latest post is a wide card with its picture, older posts sit in two columns on desktop, each post has a Share button.",
+      "Account page tidied: News and Privacy moved to More, My tickets added, Install the app only shows while you're still in the browser.",
+      "Insights → Members: the world map follows dark mode and uses the ESN cyan scale; Antarctica no longer takes a third of the map.",
+      "Plainer wording on the install page and a few other spots (no more emoji cheering).",
+    ],
+  },
   {
     version: "1.4.1",
     date: "2026-09-05",
@@ -1526,7 +1537,7 @@ async function renderCashCard(box, ev) {
       const existing = get(editing.register, editing.phase);
       const vals = existing?.counts || {};
       box.innerHTML = `
-        <div class="form-card" style="margin-bottom:20px">
+        <div class="form-card">
           <strong>${mi("point_of_sale", "sm")} ${esc(editing.register)} - count ${editing.phase} ${hintIcon("Type how many of each note/coin is in the register - the totals calculate themselves. Saving overwrites this register's previous " + editing.phase + " count.")}</strong>
           <div class="cash-grid" style="margin-top:12px">
             ${CASH_DENOMS.map((d) => `
@@ -1590,7 +1601,7 @@ async function renderCashCard(box, ev) {
     }
 
     box.innerHTML = `
-      <div class="form-card" style="margin-bottom:20px">
+      <div class="form-card">
         <strong>${mi("point_of_sale", "sm")} Cash registers</strong> ${hintIcon("Count every register before AND after the event - any board member can. The difference is what the register earned. Finance sees the overview of all events under Admin → Finance.")}
         ${registers.length ? `
         <div class="table-wrap" style="margin-top:10px"><table>
@@ -1872,25 +1883,28 @@ async function viewNews() {
         <span class="form-hint">Publishing sends a push notification to everyone who opted in - editing later doesn't.</span>
       </div>
       <div id="news-form-box"></div>` : ""}
-      ${posts.length ? posts.map((n) => `
-      <article class="form-card news-card" style="margin-bottom:16px">
-        ${n.image ? `<img class="news-img" src="${esc(n.image)}" alt="" loading="lazy" />` : ""}
-        <p class="form-hint" style="margin:0 0 4px">${fmtDate(n.createdAt)}${n.authorName ? ` · ${esc(n.authorName.split(" ")[0])}` : ""}</p>
-        <h3 style="margin:0 0 8px">${esc(n.title || "")}</h3>
-        <div class="rich">${renderRich(n.body || "")}</div>
-        <div class="form-actions" style="margin-top:10px">
-          ${n.url ? `<a class="btn btn-sm btn-cyan" href="${esc(n.url)}" target="_blank" rel="noopener">Read more ${mi("arrow_outward", "sm")}</a>` : ""}
-          ${isAdmin ? `
-          <button class="btn btn-sm btn-ghost btn-ink news-edit" data-id="${n.id}">${mi("edit", "sm")} Edit</button>
-          <button class="btn btn-sm btn-ghost news-del btn-danger" data-id="${n.id}">Delete</button>` : ""}
+      ${posts.length ? `<div class="news-grid">${posts.map((n, i) => `
+      <article class="form-card news-card ${i === 0 ? "news-latest" : ""}" id="news-${n.id}">
+        ${n.image ? `<img class="news-cover" src="${esc(n.image)}" alt="" loading="lazy" />` : ""}
+        <div class="news-body">
+          <p class="news-meta">${mi("schedule", "sm")} ${fmtDate(n.createdAt)}${n.authorName ? ` · ${esc(n.authorName.split(" ")[0])}` : ""}${i === 0 ? ` <span class="badge badge-esn">latest</span>` : ""}</p>
+          <h3 class="news-title">${esc(n.title || "")}</h3>
+          <div class="rich">${renderRich(n.body || "")}</div>
+          <div class="form-actions" style="margin-top:12px">
+            ${n.url ? `<a class="btn btn-sm btn-cyan" href="${esc(n.url)}" target="_blank" rel="noopener">${mi("open_in_new", "sm")} Read more</a>` : ""}
+            <button class="btn btn-sm btn-ghost btn-ink news-share" data-id="${n.id}" data-title="${esc(n.title || "")}">${mi("share", "sm")} Share</button>
+            ${isAdmin ? `
+            <button class="btn btn-sm btn-ghost btn-ink news-edit" data-id="${n.id}">${mi("edit", "sm")} Edit</button>
+            <button class="btn btn-sm btn-ghost news-del btn-danger" data-id="${n.id}">Delete</button>` : ""}
+          </div>
         </div>
-      </article>`).join("") : `<div class="empty-state"><div class="big">${mi("campaign")}</div><p>No news yet - announcements from the board will appear here.</p></div>`}
+      </article>`).join("")}</div>` : `<div class="empty-state"><div class="big">${mi("campaign")}</div><p>No news yet - announcements from the board will appear here.</p></div>`}
     `;
 
     const showForm = (existing) => {
       const box = document.getElementById("news-form-box");
       box.innerHTML = `
-        <div class="form-card" style="margin-bottom:18px">
+        <div class="form-card">
           <div class="form-field"><label for="nw-title">Title *</label>
             <input id="nw-title" maxlength="140" value="${esc(existing?.title || "")}" /></div>
           <div class="form-field"><label for="nw-body">Text ${hintIcon("Formatting: **bold**, *italic*, [link](https://…), '- ' bullets.")}</label>
@@ -1941,6 +1955,15 @@ async function viewNews() {
     };
 
     document.getElementById("news-new")?.addEventListener("click", () => showForm(null));
+    $app.querySelectorAll(".news-share").forEach((b) => {
+      b.onclick = async () => {
+        const url = `${location.origin}/news#news-${b.dataset.id}`;
+        if (navigator.share) {
+          try { await navigator.share({ title: b.dataset.title, text: `${b.dataset.title} - ESN Gent`, url }); return; } catch { /* cancelled */ }
+        }
+        try { await navigator.clipboard.writeText(url); toast("Link copied.", "success"); } catch { toast(url, "info"); }
+      };
+    });
     $app.querySelectorAll(".news-edit").forEach((b) => { b.onclick = () => { showForm(posts.find((p) => p.id === b.dataset.id)); window.scrollTo(0, 0); }; });
     $app.querySelectorAll(".news-del").forEach((b) => {
       b.onclick = async () => {
@@ -2417,7 +2440,7 @@ async function viewFriends() {
     <div class="empty-state" style="margin-bottom:16px"><div class="big">${mi("diversity_3")}</div>
       <p>No friendships in the tree yet - add the very first one below.</p></div>`}
 
-    <div class="form-card" style="margin-bottom:16px">
+    <div class="form-card">
       <strong>${mi("group_add", "sm")} Add a friendship</strong>
       ${people.length >= 2 ? `
       <div class="form-actions" style="margin-top:10px;align-items:center;flex-wrap:wrap">
@@ -2903,18 +2926,18 @@ async function viewPassport() {
         const latest = timed.length >= 2 ? timed.reduce((a, b2) => (a.lateMin >= b2.lateMin ? a : b2)).country : null;
         return `
       <details class="pp-section">
-        <summary>🌍 Country league <span class="form-hint">check-ins per country, this academic year</span></summary>
+        <summary>${mi("public", "sm")} Country league <span class="form-hint">check-ins per country, this academic year</span></summary>
         <div class="pp-section-body">
       <div class="form-card">
         ${league.rows.slice(0, 10).map((row, i) => `
         <div class="league-row ${row.country === myCountry ? "mine" : ""}">
           <span class="league-pos">${i + 1}</span>
           <span class="league-flag">${flagOf(row.country)}</span>
-          <span class="league-name">${esc(row.country)}${row.country === punctual ? ` <span title="Most punctual country - avg ${row.lateMin} min after start">⏱️</span>` : ""}${row.country === latest ? ` <span title="Most fashionably late - avg ${row.lateMin} min after start">🐢</span>` : ""}</span>
+          <span class="league-name">${esc(row.country)}${row.country === punctual ? ` <span title="Most punctual country - avg ${row.lateMin} min after start">${mi("timer", "sm")}️</span>` : ""}${row.country === latest ? ` <span title="Most fashionably late - avg ${row.lateMin} min after start">🐢</span>` : ""}</span>
           <span class="league-bar"><i style="width:${Math.max(4, Math.round((row.checkins / league.rows[0].checkins) * 100))}%"></i></span>
           <span class="league-count">${row.checkins}</span>
         </div>`).join("")}
-        <p class="form-hint" style="margin:8px 0 0">Updated daily. Represent your country - every scanned ticket counts! 🏁${punctual ? ` · ⏱️ most punctual: ${esc(punctual)}` : ""}${latest ? ` · 🐢 fashionably late: ${esc(latest)}` : ""}</p>
+        <p class="form-hint" style="margin:8px 0 0">Updated daily. Every scanned ticket counts for your country.${punctual ? ` · most punctual: ${esc(punctual)}` : ""}${latest ? ` · 🐢 fashionably late: ${esc(latest)}` : ""}</p>
       </div>
         </div>
       </details>`;
@@ -3149,7 +3172,7 @@ async function viewGuide() {
       ${items.length && currentUser ? `
       <div class="guide-progress">
         <div class="guide-bar"><div style="width:${items.length ? Math.round((doneCount / items.length) * 100) : 0}%"></div></div>
-        <span class="form-hint">${doneCount}/${items.length} ticked off${doneCount === items.length && items.length ? " - you've done it ALL, legend 🏆" : ""}</span>
+        <span class="form-hint">${doneCount}/${items.length} ticked off${doneCount === items.length && items.length ? " - all done" : ""}</span>
       </div>` : currentUser ? "" : `<p class="form-hint" style="margin:-6px 0 12px">Sign in to tick things off and keep your progress.</p>`}
       ${sects.length > 1 ? `
       <div class="filter-chips" style="margin:0 0 14px">
@@ -3210,12 +3233,14 @@ async function viewGuide() {
 // Partnership follow-up fields (v0.119, mirrors the board's Excel):
 // status, category, signing/end dates, stop reason, contact, notes.
 const PARTNER_STATUSES = [
-  ["active", "🟢 Active"], ["in-progress", "🔵 In progress"], ["contacted", "✉️ Contacted"],
-  ["unknown", "🟠 Unknown"], ["stopped", "🔴 Stopped"], ["refused", "⚫ Refused"],
+  ["active", "Active"], ["in-progress", "In progress"], ["contacted", "Contacted"],
+  ["unknown", "Unknown"], ["stopped", "Stopped"], ["refused", "Refused"],
 ];
+const PARTNER_STATUS_COLOR = { active: "#7AC143", "in-progress": "#00AEEF", contacted: "#2E3192", unknown: "#F47B20", stopped: "#D7263D", refused: "#676a80" };
+const statusDot = (k) => `<i class="status-dot" style="background:${PARTNER_STATUS_COLOR[k] || "#9aa0b8"}"></i>`;
 const PARTNER_TYPES = ["Bar / Resto", "Drinks / Food", "Transport", "Sport", "Healthcare / Beauty", "App", "Shop", "Hostel / Travel", "Other"];
 const partnerStatus = (p) => p.status || "active"; // pre-v0.119 docs = active
-const partnerStatusLabel = (p) => (PARTNER_STATUSES.find(([k]) => k === partnerStatus(p)) || PARTNER_STATUSES[0])[1];
+const partnerStatusLabel = (p) => `${statusDot(partnerStatus(p))}${(PARTNER_STATUSES.find(([k]) => k === partnerStatus(p)) || PARTNER_STATUSES[0])[1]}`;
 
 // One-time import of the board's "Partnerships MAIN.xlsx" (26-27 sheet
 // + the stopped/refused archive), curated 25/08/2026 - used by the
@@ -3248,7 +3273,7 @@ async function viewDeals() {
           <button class="chip ${dealsPrefs.status === "all" ? "active" : ""}" data-st="all">All (${partners.length})</button>
           ${PARTNER_STATUSES.map(([k, l]) => {
             const n = partners.filter((p) => partnerStatus(p) === k).length;
-            return n ? `<button class="chip ${dealsPrefs.status === k ? "active" : ""}" data-st="${k}">${l} (${n})</button>` : "";
+            return n ? `<button class="chip ${dealsPrefs.status === k ? "active" : ""}" data-st="${k}">${statusDot(k)}${l} (${n})</button>` : "";
           }).join("")}
         </div>
       </div>
@@ -3324,7 +3349,7 @@ async function viewDeals() {
         if (dealsPrefs.type !== "all") shown = shown.filter((p) => (p.type || "Other") === dealsPrefs.type);
       }
       if (!shown.length) {
-        box.innerHTML = `<div class="empty-state"><div class="big">${mi("sell")}</div><p>${partners.length ? "No partners match your search or filters." : "No deals listed yet - the board is out negotiating. 😉"}</p></div>`;
+        box.innerHTML = `<div class="empty-state"><div class="big">${mi("sell")}</div><p>${partners.length ? "No partners match your search or filters." : "No deals listed yet."}</p></div>`;
         return;
       }
       let groups;
@@ -3335,7 +3360,7 @@ async function viewDeals() {
         shown.forEach((p) => { (m[p.type || "Other"] ??= []).push(p); });
         groups = Object.keys(m).sort().map((k) => ({ label: k, items: m[k] }));
       } else {
-        groups = PARTNER_STATUSES.map(([k, l]) => ({ label: l, items: shown.filter((p) => partnerStatus(p) === k) })).filter((g) => g.items.length);
+        groups = PARTNER_STATUSES.map(([k, l]) => ({ label: `${statusDot(k)}${l}`, items: shown.filter((p) => partnerStatus(p) === k) })).filter((g) => g.items.length);
       }
       box.innerHTML = groups.map((g) => `
         ${g.label ? `<h3 class="group-title">${g.label} · ${g.items.length}</h3>` : ""}
@@ -3371,7 +3396,7 @@ async function viewDeals() {
     const showForm = (existing) => {
       const box = document.getElementById("pt-form-box");
       box.innerHTML = `
-        <div class="form-card" style="margin-bottom:18px">
+        <div class="form-card">
           <div class="form-grid">
             <div class="form-field"><label for="pt-name">Partner name *</label>
               <input id="pt-name" maxlength="90" value="${esc(existing?.name || "")}" /></div>
@@ -3928,6 +3953,14 @@ function accentFor(id) {
 function eventAccent(ev) {
   return ev.tagColor && /^#[0-9a-fA-F]{6}$/.test(ev.tagColor) ? ev.tagColor : accentFor(ev.id);
 }
+// White text on a light tag colour is unreadable - pick ink for light backgrounds.
+function readableOn(hex) {
+  const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex || "");
+  if (!m) return "#fff";
+  const [r, g, b] = [1, 2, 3].map((i) => parseInt(m[i], 16) / 255).map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+  const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  return lum > 0.45 ? "#191a2e" : "#fff";
+}
 function tagBadge(ev) {
   // Multi-tag (v0.103): ev.tags = [{id,name,color},…]; legacy single-tag
   // events keep working through tagName/tagColor.
@@ -3935,7 +3968,7 @@ function tagBadge(ev) {
     ? ev.tags
     : ev.tagName ? [{ name: ev.tagName, color: ev.tagColor }] : [];
   return tags.map((t) =>
-    `<span class="badge" style="background:${t.color && /^#[0-9a-fA-F]{6}$/.test(t.color) ? t.color : eventAccent(ev)}">${esc(t.name)}</span>`
+    `<span class="badge" style="background:${t.color && /^#[0-9a-fA-F]{6}$/.test(t.color) ? t.color : eventAccent(ev)};color:${readableOn(t.color && /^#[0-9a-fA-F]{6}$/.test(t.color) ? t.color : eventAccent(ev))}">${esc(t.name)}</span>`
   ).join(" ");
 }
 // All tag names on an event (multi-tag aware) - passport visas etc.
@@ -4595,7 +4628,7 @@ async function viewHome() {
       </span>
       <span class="chev">›</span>
     </a>`).join("")}
-    <h2 class="section-title">Upcoming events</h2>
+    <h2 class="section-title">${mi("event")} Upcoming events</h2>
     <div class="filter-bar">
       <input id="filter-q" type="search" placeholder="Search events, places…" value="${esc(homeFilter.q)}" />
       <div class="filter-chips">
@@ -4604,7 +4637,7 @@ async function viewHome() {
     </div>
     <div id="home-events"></div>
     ${nextOffice ? `
-    <h2 class="section-title">Office hours</h2>
+    <h2 class="section-title">${mi("meeting_room")} Office hours</h2>
     <a class="news-strip" href="/office">
       <span class="news-strip-icon">${mi("meeting_room")}</span>
       <span class="news-strip-main">
@@ -5876,12 +5909,12 @@ function viewChangelog() {
     return;
   }
   $app.innerHTML = `
-    <h2 class="section-title">What's new</h2>
+    <h2 class="section-title">${mi("new_releases")} What's new</h2>
     <p class="form-hint" style="margin:-6px 0 16px">Current version: <strong>v${APP_VERSION}</strong> - newest changes first.</p>
     <div class="faq-wrap">
       ${(() => {
         const card = (rel) => `
-        <div class="form-card" style="margin-bottom:14px">
+        <div class="form-card">
           <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px">
             <strong>v${esc(rel.version)}</strong>
             <span class="form-hint">${esc(rel.date)}</span>
@@ -6252,7 +6285,7 @@ async function viewKiosk() {
   }
   $app.innerHTML = `
     <div class="scan-panel">
-      <h2 class="section-title">Kiosk mode</h2>
+      <h2 class="section-title">${mi("tv")} Kiosk mode</h2>
       <p class="form-hint" style="margin:-6px 0 12px">Continuous scanning - valid tickets are checked in automatically. Keep this phone at the door.</p>
       <div class="scan-video-wrap">
         <video id="scan-video" playsinline muted autoplay></video>
@@ -6529,7 +6562,7 @@ async function viewNotifications() {
   const cats = PUSH_CATEGORIES.filter(([key]) => key !== "shifts" || myRole);
 
   $app.innerHTML = `
-    <h2 class="section-title">Notifications</h2>
+    <h2 class="section-title">${mi("notifications")} Notifications</h2>
     <div class="form-card" style="max-width:640px;margin-bottom:16px">
       <strong>${mi("notifications", "sm")} This device</strong>
       ${!pushConfig.vapidKey ? `<p class="form-hint" style="margin-top:8px">Notifications aren't switched on for the app yet - the board is setting this up.</p>`
@@ -6608,10 +6641,10 @@ function viewInstall() {
     <li class="inst-step"><span class="inst-num">${n}</span><span>${txt}</span></li>`;
   $app.innerHTML = `
     <h2 class="section-title">${mi("install_mobile")} Get the app on your phone</h2>
-    <p class="form-hint" style="margin:-6px 0 16px">The ESN Gent App installs straight from the browser - no app store, 30 seconds. You get an app icon, full-screen mode, offline tickets and push notifications.</p>
-    ${isInstalledApp() ? `<div class="form-card" style="margin-bottom:16px;border-left:4px solid var(--esn-green)"><strong>${mi("check_circle", "sm")} You're already using the installed app - nice!</strong> <span class="form-hint">Just check the notifications section below.</span></div>` : ""}
+    <p class="form-hint" style="margin:-6px 0 16px">The app installs from the browser, no app store needed. Installed, you get an icon on your home screen, full-screen mode, offline tickets and push notifications.</p>
+    ${isInstalledApp() ? `<div class="form-card" style="border-left:4px solid var(--esn-green)"><strong>${mi("check_circle", "sm")} You're using the installed app.</strong> <span class="form-hint">Nothing more to do here - notifications are under Profile → Notifications.</span></div>` : ""}
 
-    <div class="form-card" style="margin-bottom:16px">
+    <div class="form-card">
       <strong style="font-size:1.05rem">${mi("android", "sm")} Android (Chrome)</strong>
       <ol class="inst-list">
         ${step(1, `Open <strong>app.esngent.org</strong> in <strong>Chrome</strong>.`)}
@@ -6622,7 +6655,7 @@ function viewInstall() {
       <p class="form-hint" style="margin:8px 0 0"><strong>Notifications on Android:</strong> open the installed app → Profile → <a href="/notifications">Notifications</a> → turn them on and allow the permission popup. Done.</p>
     </div>
 
-    <div class="form-card" style="margin-bottom:16px">
+    <div class="form-card">
       <strong style="font-size:1.05rem">${mi("ios_share", "sm")} iPhone &amp; iPad (Safari)</strong>
       <ol class="inst-list">
         ${step(1, `Open <strong>app.esngent.org</strong> in <strong>Safari</strong> (not Instagram's browser - tap ⋯ → Open in Safari first).`)}
@@ -6634,13 +6667,13 @@ function viewInstall() {
     </div>
 
     <div class="form-card">
-      <strong>Why bother?</strong>
+      <strong>${mi("star", "sm")} What you get</strong>
       <ul style="margin:8px 0 0 18px;font-size:.9rem">
         <li style="margin-bottom:4px">${mi("qr_code_2", "sm")} Your tickets work <strong>offline</strong> - they scan at the door even with zero signal.</li>
         <li style="margin-bottom:4px">${mi("notifications_active", "sm")} Push for new events, your waitlist spot, ticket &amp; ESNcard updates and passport stamps.</li>
         <li style="margin-bottom:4px">${mi("workspace_premium", "sm")} One tap from your home screen to your <a href="/passport">ESN Passport</a>.</li>
       </ul>
-      <p class="form-hint" style="margin:10px 0 0">Problems installing? Ask at <a href="/office">office hours</a> or any event - we've done this a few hundred times. 😉</p>
+      <p class="form-hint" style="margin:10px 0 0">Not working? Ask a board member at <a href="/office">office hours</a> or at any event.</p>
     </div>
   `;
 }
@@ -6899,7 +6932,7 @@ function viewFaq() {
     <div class="faq-list">${items.map(([q, a]) => faqItem(q, a)).join("")}</div>`;
 
   $app.innerHTML = `
-    <h2 class="section-title">Help &amp; FAQ</h2>
+    <h2 class="section-title">${mi("help")} Help &amp; FAQ</h2>
     <div class="filter-bar" style="margin-bottom:14px">
       <input id="faq-q" type="search" placeholder="Search the FAQ…" autocomplete="off" />
     </div>
@@ -6996,7 +7029,7 @@ async function viewContact() {
       <input id="ct-q" type="search" placeholder="What's your question?" autocomplete="off" maxlength="200" />
     </div>
     <div id="ct-faq-hits" style="margin-bottom:14px"></div>
-    <div class="form-card" style="margin-bottom:20px">
+    <div class="form-card">
       <strong>${mi("send", "sm")} Send it to the board</strong>
       <div class="form-grid" style="margin-top:10px">
         <div class="form-field">
@@ -7104,7 +7137,7 @@ async function viewContact() {
 // ------------------------------------------------------------
 function viewPrivacy() {
   $app.innerHTML = `
-    <h2 class="section-title">Privacy policy</h2>
+    <h2 class="section-title">${mi("policy")} Privacy policy</h2>
     <div class="form-card rich" style="max-width:760px">
       <p><em>Last updated: 23 August 2026 · ESN Gent · Contact: <a href="mailto:esn.gent@gmail.com">esn.gent@gmail.com</a></em></p>
 
@@ -7489,16 +7522,18 @@ async function viewAccount() {
         <a href="/deals">${mi("sell", "sm")}ESNcard deals<span class="chev">›</span></a>
         ${friendshipEligible() ? `<a href="/friends">${mi("diversity_3", "sm")}Friendship tree<span class="chev">›</span></a>` : ""}
         ${isAdmin || myRole === "alumnicoord" ? `<a href="/alumni">${mi("school", "sm")}Alumni network<span class="chev">›</span></a>` : ""}
-        <a href="/news">${mi("campaign", "sm")}News<span class="chev">›</span></a>
         <div class="menu-group">More</div>
+        <a href="/my-tickets">${mi("confirmation_number", "sm")}My tickets<span class="chev">›</span></a>
+        <a href="/news">${mi("campaign", "sm")}News<span class="chev">›</span></a>
         <a href="/office">${mi("meeting_room", "sm")}ESN office &amp; hours<span class="chev">›</span></a>
-        <a href="/install">${mi("install_mobile", "sm")}Install the app<span class="chev">›</span></a>
         <a href="/contact">${mi("forum", "sm")}Contact the board<span class="chev">›</span></a>
         <a href="/faq">${mi("help", "sm")}Help &amp; FAQ<span class="chev">›</span></a>
+        ${isInstalledApp() ? "" : `<a href="/install">${mi("install_mobile", "sm")}Install the app<span class="chev">›</span></a>`}
+        <a href="/privacy">${mi("policy", "sm")}Privacy policy<span class="chev">›</span></a>
         <button id="btn-signout-account">${mi("logout", "sm")}Sign out</button>
       </nav>
       <p class="account-foot-links">
-        <a href="/privacy">Privacy policy</a>${myRole ? ` · <a href="/changelog">What's new</a>` : ""} · v${APP_VERSION}
+        ${myRole ? `<a href="/changelog">What's new</a> · ` : ""}v${APP_VERSION}
       </p>
       </div>
     </div>
@@ -8489,7 +8524,7 @@ async function viewAdminUserDetail(uid) {
       : `<p class="form-hint" style="margin:0">No snapshot of the form yet - snapshots are kept from v1.3.0 onwards, so only submissions made after that show up here.</p>`;
     return `
     <h3 class="section-title sm">ESNcard submissions</h3>
-    <div class="form-card" style="margin-bottom:18px">
+    <div class="form-card">
       ${cur}
       ${list}
     </div>`;
@@ -8611,7 +8646,7 @@ async function viewAdminUserDetail(uid) {
 
     ${(teamDoc || boardHist.length) ? `
     <h3 class="section-title sm">Board &amp; team</h3>
-    <div class="form-card" style="margin-bottom:18px">
+    <div class="form-card">
       <p style="margin:0 0 ${boardHist.length ? "10px" : "0"};font-size:.92rem">${teamDoc
         ? `Currently on the team: <strong>${esc(teamDoc.role || "-")}</strong>${teamDoc.boardFunction ? ` - <strong>${esc(teamDoc.boardFunction)}</strong>` : ""}`
         : `Not on the team right now - but has a recorded team past:`}</p>
@@ -8742,7 +8777,7 @@ async function viewAdminInbox() {
     };
     document.getElementById("ib-list").innerHTML = shown.length
       ? `<div class="faq-list">${shown.map(row).join("")}</div>`
-      : `<div class="empty-state"><div class="big">${mi("forum")}</div><p>${inboxFilter.status === "open" ? "No open messages - inbox zero! 🎉" : "Nothing here."}</p></div>`;
+      : `<div class="empty-state"><div class="big">${mi("forum")}</div><p>${inboxFilter.status === "open" ? "No open messages." : "Nothing here."}</p></div>`;
 
     const loadThread = async (mid) => {
       const box = $app.querySelector(`.ct-thread[data-mid="${mid}"]`);
@@ -8793,7 +8828,7 @@ async function viewAdminInbox() {
 
   const cats = [...new Set(msgs.map((m) => m.category || "Other"))];
   $app.innerHTML = `
-    <h2 class="section-title">Inbox</h2>
+    <h2 class="section-title">${mi("forum")} Inbox</h2>
     ${adminTabs("inbox")}
     <p class="form-hint" style="margin:-4px 0 12px">Messages from the in-app <a href="/contact">contact page</a>. Replying notifies the student by push and e-mail; students see the FAQ first, so what lands here usually needs a human.</p>
     <div class="filter-bar" style="margin-bottom:12px">
@@ -9011,7 +9046,7 @@ async function viewAdminAnalytics() {
   } catch { /* ratings are optional */ }
 
   $app.innerHTML = `
-    <h2 class="section-title">Insights</h2>
+    <h2 class="section-title">${mi("monitoring")} Insights</h2>
     ${adminTabs("analytics")}
     ${insightsSubnav("analytics")}
     ${yearCount != null ? `
@@ -9019,13 +9054,13 @@ async function viewAdminAnalytics() {
       <div><strong>Activities in ${now.getFullYear()}: ${yearCount}</strong> ${hintIcon("Published events this calendar year, planned ones included. ESN Gent reports at least 10 activities per year to the DSA.")}</div>
       <button class="btn btn-dark btn-sm" id="btn-dsa">DSA list (CSV)</button>
     </div>` : ""}
-    <div class="form-card" style="margin-bottom:16px">
+    <div class="form-card">
       <strong>Ticket signups per week</strong>
       <p class="form-hint" style="margin-bottom:8px">Confirmed tickets (paid + free), last 12 weeks - hover a bar for its value.</p>
       ${barChart(weeks.map((w) => ({ label: w.label, value: w.value })))}
     </div>
     ${tagRows.length ? `
-    <div class="form-card" style="margin-bottom:16px">
+    <div class="form-card">
       <strong>${mi("label", "sm")} Per tag &amp; ESN cause</strong>
       <p class="form-hint" style="margin-bottom:8px">Events = published this calendar year (multi-tagged events count for each tag). Tickets, attendance &amp; revenue from the last ~6 months. The ${mi("public", "sm")} rows are the ESN causes, counted via each tag's linked cause - the "where can we improve" view.</p>
       <div class="table-wrap"><table>
@@ -9043,7 +9078,7 @@ async function viewAdminAnalytics() {
       </table></div>
       ${missingCauses.length ? `<p class="form-hint" style="margin-top:8px">${mi("warning", "sm")} <strong>Causes without any event this year:</strong> ${missingCauses.map(esc).join(" · ")} - something for the next planning meeting.</p>` : ""}
     </div>` : ""}
-    <div class="form-card" style="margin-bottom:16px">
+    <div class="form-card">
       <strong>Revenue per month</strong>
       <p class="form-hint" style="margin-bottom:8px">Paid tickets + paid merch, last 6 months.</p>
       ${barChart(months.map((m) => ({ label: m.label, value: m.value })), { money: true })}
@@ -9149,11 +9184,11 @@ async function viewAdminSettings() {
   const isSuperUser = myRole === "superadmin";
 
   $app.innerHTML = `
-    <h2 class="section-title">Settings</h2>
+    <h2 class="section-title">${mi("settings")} Settings</h2>
     ${adminTabs("settings")}
 
     <h3 class="settings-group">${mi("celebration", "sm")} Events</h3>
-    <div class="form-card" style="margin-bottom:16px">
+    <div class="form-card">
       <strong>${mi("tune", "sm")} Event defaults</strong> ${hintIcon("Every NEW event starts with these; events without their own value fall back to them too. Individual events can still override both under Advanced settings.")}
       <div class="form-actions" style="margin:12px 0 0;align-items:flex-end">
         <div class="form-field" style="margin:0"><label for="ed-cancel">Cancellation deadline (h)</label>
@@ -9165,13 +9200,13 @@ async function viewAdminSettings() {
         <button class="btn btn-sm btn-green" id="ed-save">Save defaults</button>
       </div>
     </div>
-    <div class="form-card" style="margin-bottom:16px">
+    <div class="form-card">
       <strong>${mi("label", "sm")} Event tags &amp; colours</strong> ${hintIcon("Categories like Party, Sport, Trip - the colour becomes the event's accent on cards and the calendar. Renaming or recolouring updates all events using the tag.")}
       ${isSuperUser
         ? `<div id="tags-box" style="margin-top:12px"><p class="form-hint">Loading…</p></div>`
-        : `<p class="form-hint" style="margin-top:8px">Managed by the superadmin. Current tags: ${tags.length ? tags.map((t) => `<span class="badge" style="background:${esc(t.color || "#2E3192")}">${esc(t.name)}</span>`).join(" ") : "none yet"}</p>`}
+        : `<p class="form-hint" style="margin-top:8px">Managed by the superadmin. Current tags: ${tags.length ? tags.map((t) => `<span class="badge" style="background:${esc(t.color || "#2E3192")};color:${readableOn(t.color || "#2E3192")}">${esc(t.name)}</span>`).join(" ") : "none yet"}</p>`}
     </div>
-    <div class="form-card" style="margin-bottom:16px">
+    <div class="form-card">
       <strong>${mi("event_available", "sm")} Google Calendar sync</strong> ${hintIcon("Sync is fully automatic on every event/meeting change. This button is only for the one-time setup and for forcing a full re-push if the calendar ever looks out of date.")}
       <div class="form-actions" style="margin-top:10px">
         <button class="btn btn-ghost btn-sm btn-ink" id="btn-cal-sync">${mi("sync", "sm")} Force full re-sync</button>
@@ -9179,7 +9214,7 @@ async function viewAdminSettings() {
     </div>
 
     <h3 class="settings-group">${mi("badge", "sm")} ESNcard</h3>
-    <div class="form-card" style="margin-bottom:16px">
+    <div class="form-card">
       <strong>${mi("payments", "sm")} ESNcard pricing</strong> ${hintIcon("Used everywhere instantly: the apply form, the online payment (server-side) and the admin buttons. Board/AB/team cards stay free per the statutes. Statutory defaults: €15 / €7.50.")}
       <div class="form-actions" style="margin:12px 0 0;align-items:flex-end">
         <div class="form-field" style="margin:0"><label for="cp-student">Student price €</label>
@@ -9205,7 +9240,7 @@ async function viewAdminSettings() {
       </div>` : ""}
     </div>
     ${isSuperUser ? `
-    <div class="form-card" style="margin-bottom:16px">
+    <div class="form-card">
       <strong>${mi("mail", "sm")} "Card ready" e-mail</strong> ${hintIcon("Sent automatically the moment a card number is assigned to a student. Placeholders are filled in per student. Empty fields use the built-in text. Sending only happens while confirmation e-mails are enabled under System. Superadmin only.")}
       <div class="form-field" style="margin-top:12px"><label for="tpl-card-subject">Subject</label>
         <input id="tpl-card-subject" maxlength="150" placeholder="Your ESNcard number is ready" /></div>
@@ -9222,7 +9257,7 @@ async function viewAdminSettings() {
     <h3 class="settings-group">${mi("apartment", "sm")} Organisation</h3>
 
 
-    <div class="form-card" style="margin-bottom:16px">
+    <div class="form-card">
       <strong>${mi("apartment", "sm")} Organisation info</strong> ${hintIcon("Shown in the footer, on the Office page and in the FAQ - update these when the office, hours or contact address change (new semester, new board).")}
       <div class="form-grid" style="margin-top:12px">
         <div class="form-field full"><label for="org-address">Office address</label>
@@ -9241,7 +9276,7 @@ async function viewAdminSettings() {
       <div class="form-actions"><button class="btn btn-sm btn-green" id="org-save">Save organisation info</button></div>
     </div>
 
-    <div class="form-card" style="margin-bottom:16px">
+    <div class="form-card">
       <strong>${mi("quiz", "sm")} Student FAQ</strong> ${hintIcon("Leave empty to use the app's built-in FAQ. To customise: one block per question - first line is the question, the following lines the answer. Separate blocks with a blank line. Formatting: **bold**, [link text](https://…) or [Office page](#/office).")}
       <div class="form-field" style="margin-top:10px">
         <textarea id="faq-editor" rows="10" placeholder="How do I get my ESNcard?&#10;Apply on your account page, pay online and pick it up during [office hours](#/office).&#10;&#10;Next question…&#10;Its answer…">${faqCustom ? esc(faqCustom.map((it) => `${it.q}\n${it.a}`).join("\n\n")) : ""}</textarea>
@@ -9249,7 +9284,7 @@ async function viewAdminSettings() {
       <div class="form-actions"><button class="btn btn-sm btn-green" id="faq-save">Save FAQ</button></div>
     </div>
 
-    <div class="form-card" style="margin-bottom:16px">
+    <div class="form-card">
       <strong>${mi("link", "sm")} Link-in-bio page</strong> ${hintIcon("The app's own Linktree at app.esngent.org/links - put THAT link in the Instagram bio. The top of the page always shows the next 3 events automatically; below come these links. Board members can also edit them via the pencil on the page itself.")}
       <p class="form-hint" style="margin:8px 0">Public URL: <code>https://app.esngent.org/links</code> - one link per line as <code>Label | https://url</code>, section titles start with <code>## </code>.</p>
       <div class="form-field"><textarea id="lt-editor" rows="10">${esc(linktreeContent)}</textarea></div>
@@ -9260,7 +9295,7 @@ async function viewAdminSettings() {
     </div>
 
     ${isSuperUser ? `
-    <div class="form-card" style="margin-bottom:16px">
+    <div class="form-card">
       <strong>${mi("format_list_bulleted", "sm")} Org lists</strong> ${hintIcon("These change over the years, so they live here instead of in code. One item per line. Leave a box empty to keep the app's built-in list. Renaming here does not change data already saved with the old names.")}
       <div class="form-grid" style="margin-top:12px">
         <div class="form-field"><label for="ol-functions">Board functions (Team tab)</label>
@@ -9278,14 +9313,14 @@ async function viewAdminSettings() {
     </div>` : ""}
 
 
-    <div class="form-card" style="margin-bottom:16px">
+    <div class="form-card">
       <strong>${mi("home_pin", "sm")} Event locations</strong> ${hintIcon("Venue profiles for places you use all the time (sports hall, 't Kofschip, Therminal…). Each has an address, a default picture (used when an event has none), default tags (pre-ticked when picked) and its own statistics. In the event form they appear as a 'saved venue' picker above the Location field.")}
       <div id="venues-box" style="margin-top:10px"><p class="form-hint">Loading venues…</p></div>
     </div>
 
     <h3 class="settings-group">${mi("build", "sm")} System</h3>
 
-    <div class="form-card" style="margin-bottom:16px">
+    <div class="form-card">
       <strong>${mi("campaign", "sm")} Site banner</strong> ${hintIcon("A strip shown at the top of every page for everyone - warnings ('tonight's party moved!'), big announcements. A CHANGED message reappears even for people who dismissed the old one. While nothing is saved (or it's switched off), no banner shows.")}
       <div class="form-field" style="margin-top:10px">
         <textarea id="bn-text" rows="2" maxlength="300" placeholder="e.g. Tonight's party moved to Vooruit - doors at 22:00!"></textarea>
@@ -9299,7 +9334,7 @@ async function viewAdminSettings() {
       <p class="form-hint" style="margin-top:8px" id="bn-hint">Loading current banner…</p>
     </div>
 
-    <div class="form-card" style="margin-bottom:16px">
+    <div class="form-card">
       <strong>${mi("school", "sm")} UGent DSA sync</strong> ${hintIcon("Pushes published events to the university's activity site (dsa.ugent.be) automatically - creating, updating and removing them as you edit. Per-event opt-out lives in the event form under Advanced. One-time setup: run 'firebase functions:secrets:set DSA_API_KEY' with the key you got from DSA, redeploy the functions, save your association abbreviation here, then hit 'Push all upcoming events'.")}
       <div class="form-actions" style="margin-top:10px;align-items:center;flex-wrap:wrap">
         <label class="checkbox-row" style="margin:0"><input type="checkbox" id="dsa-enabled" /> Enable DSA sync</label>
@@ -9310,7 +9345,7 @@ async function viewAdminSettings() {
       <p class="form-hint" style="margin-top:8px" id="dsa-hint">Loading current settings…</p>
     </div>
 
-    <div class="form-card" style="margin-bottom:16px">
+    <div class="form-card">
       <strong>${jacobImg("jacob-sm")} Jacob - AI features</strong> ${hintIcon("Jacob (named after our mascot) is the board-only AI helper, powered by Google Gemini on the existing Google billing: he drafts event descriptions, digests event feedback and recaps board-meeting minutes. One-time setup: create an API key at aistudio.google.com/apikey, then run 'firebase functions:secrets:set GEMINI_API_KEY' and redeploy the functions. Costs at our scale: well under €1/month.")}
       <div class="form-actions" style="margin-top:10px;align-items:center">
         <label class="checkbox-row" style="margin:0"><input type="checkbox" id="ai-enabled" ${aiConfig.enabled ? "checked" : ""} /> Enable Jacob (board only)</label>
@@ -9320,7 +9355,7 @@ async function viewAdminSettings() {
       <p class="form-hint" style="margin-top:8px">Off = every AI button disappears and the server refuses AI requests. Student data never goes into prompts.</p>
     </div>
 
-    <div class="form-card" style="margin-bottom:16px">
+    <div class="form-card">
       <strong>${mi("mail", "sm")} Confirmation e-mails</strong> ${hintIcon("Sends a ticket-confirmation e-mail from the section's own mailbox whenever a registration is paid or free. One-time setup: create a mailbox (e.g. app@esngent.org) in the hosting panel's Mail Manager, fill in its SMTP settings here, and store the mailbox password once with 'firebase functions:secrets:set SMTP_PASSWORD' before deploying. Works with any SMTP provider - moving to e.g. Brevo later is just new values here plus a new password secret, no code changes.")}
       <div class="form-grid" style="margin-top:12px">
         <div class="form-field"><label for="em-host">SMTP server</label>
@@ -9344,7 +9379,7 @@ async function viewAdminSettings() {
       <p class="form-hint" style="margin-top:8px">Save first, then test - the test goes to your own address and works while the switch is still off. Flip it on once the test arrives (check spam the first time; DKIM in the hosting panel helps).</p>
     </div>
 
-    <div class="form-card" style="margin-bottom:16px">
+    <div class="form-card">
       <strong>${mi("bug_report", "sm")} Error log</strong> ${hintIcon("Every error users actually see, plus crashes and server-side sync/push failures - newest first, with timestamp, place and app version. Cleared entries are gone for good.")}
       <div class="form-actions" style="margin:10px 0">
         <button class="btn btn-sm btn-ghost btn-ink" id="err-refresh">${mi("refresh", "sm")} Refresh</button>
@@ -9355,7 +9390,7 @@ async function viewAdminSettings() {
     </div>
 
     ${isSuperUser ? `
-    <div class="form-card" style="margin-bottom:16px">
+    <div class="form-card">
       <strong>${mi("notifications", "sm")} Push notifications</strong>
       ${pushConfig.vapidKey
         ? ` <span class="badge badge-paid">configured</span> ${hintIcon("Only needs touching if the Web Push key pair is ever regenerated in Firebase console → Project settings → Cloud Messaging.")}`
@@ -10131,7 +10166,7 @@ async function viewAdminTeam() {
       <span class="org-perm">${perm}</span>
     </div>`;
   const orgChart = `
-    <div class="form-card" style="margin-bottom:22px">
+    <div class="form-card">
       <strong>Organigram</strong>
       <p class="form-hint" style="margin-bottom:10px">Management (President · Vice-President · Treasurer) leads the board. The Advisory Board is an <strong>alumni extension</strong> of the board - AB members are not board members. The alumni network holds the alumni coordinator &amp; previous board members. App permissions stay: superadmin → finance → board → advisory → alumnicoord → volunteer.</p>
       <div class="orgc">
@@ -10153,7 +10188,7 @@ async function viewAdminTeam() {
     </div>`;
 
   $app.innerHTML = `
-    <h2 class="section-title">Team</h2>
+    <h2 class="section-title">${mi("group")} Team</h2>
     ${adminTabs("team")}
     ${orgChart}
     <div class="form-card" style="max-width:760px">
@@ -10320,7 +10355,7 @@ async function viewAdminMerch(yearSel = ayStartYear()) {
   }).join("");
 
   $app.innerHTML = `
-    <h2 class="section-title">Merch</h2>
+    <h2 class="section-title">${mi("storefront")} Merch</h2>
     ${adminTabs("merch")}
     <div id="m-stats"></div>
     <div class="form-actions" style="margin:0 0 14px">
@@ -10667,8 +10702,12 @@ async function renderNationalityMap(users, onSelect) {
     const nameFor = (f) => MAP_ALIASES[f.properties.name] || f.properties.name;
 
     const max = Math.max(...Object.values(counts));
-    // Sequential single hue (magnitude): light → dark ESN blue
-    const color = window.d3.scaleSqrt().domain([0, max]).range(["#e4f2fc", "#0b5c93"]);
+    // Sequential single hue (magnitude) in ESN cyan, theme-aware: the ends
+    // come from CSS variables so the map reads on dark surfaces too.
+    const cssVar = (n, fb) => (getComputedStyle(document.documentElement).getPropertyValue(n) || "").trim() || fb;
+    const lo = cssVar("--map-lo", "#d9f1fc"), hi = cssVar("--map-hi", "#0077b6");
+    const seaFill = cssVar("--map-sea", "#f6f9fd"), landFill = cssVar("--map-land", "#eceef5");
+    const color = window.d3.scaleSqrt().domain([0, max]).range([lo, hi]);
 
     const width = el.clientWidth || 760;
     const height = Math.round(width * 0.52);
@@ -10678,14 +10717,14 @@ async function renderNationalityMap(users, onSelect) {
       .attr("aria-label", "World map of member nationalities");
     const proj = window.d3.geoNaturalEarth1().fitSize([width, height], { type: "Sphere" });
     const path = window.d3.geoPath(proj);
-    svg.append("path").attr("d", path({ type: "Sphere" })).attr("fill", "#f6f9fd");
+    svg.append("path").attr("d", path({ type: "Sphere" })).attr("fill", seaFill);
 
     const tip = document.getElementById("map-tip");
     const card = document.getElementById("nat-map-card");
-    svg.selectAll("path.country").data(countries).join("path")
+    svg.selectAll("path.country").data(countries.filter((d) => d.id !== "010")).join("path") // 010 = Antarctica
       .attr("class", "country")
       .attr("d", path)
-      .attr("fill", (d) => (counts[nameFor(d)] ? color(counts[nameFor(d)]) : "#eceef5"))
+      .attr("fill", (d) => (counts[nameFor(d)] ? color(counts[nameFor(d)]) : landFill))
       .style("cursor", (d) => (counts[nameFor(d)] ? "pointer" : "default"))
       .on("mousemove", (ev, d) => {
         const name = nameFor(d);
@@ -10704,7 +10743,7 @@ async function renderNationalityMap(users, onSelect) {
 
     document.getElementById("map-legend").innerHTML = `
       <span>0</span>
-      <span class="map-grad" style="background:linear-gradient(90deg,#e4f2fc,#0b5c93)"></span>
+      <span class="map-grad" style="background:linear-gradient(90deg,${lo},${hi})"></span>
       <span>${max}</span>`;
 
     const matched = new Set(countries.map(nameFor));
@@ -10770,7 +10809,7 @@ async function viewAdminMembers(yearSel = ayStartYear()) {
   };
 
   $app.innerHTML = `
-    <h2 class="section-title">Insights</h2>
+    <h2 class="section-title">${mi("monitoring")} Insights</h2>
     ${adminTabs("members")}
     ${insightsSubnav("members")}
     <div class="form-actions" style="margin:0 0 14px;align-items:center">
@@ -10822,7 +10861,7 @@ async function viewAdminMembers(yearSel = ayStartYear()) {
     const list = users.filter((u) => u.nationality === name)
       .sort((a, b) => (a.displayName || "").localeCompare(b.displayName || ""));
     box.innerHTML = `
-      <div class="form-card" style="margin-bottom:22px">
+      <div class="form-card">
         <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
           <strong>${esc(name)} - ${list.length} member${list.length === 1 ? "" : "s"}</strong>
           <button class="btn btn-sm btn-ghost btn-danger" id="cm-close">✕ close</button>
@@ -11057,7 +11096,7 @@ async function viewAdminUsers(yearSel = ayStartYear(), allUsers = false, tab = "
   </div>`;
 
   $app.innerHTML = `
-    <h2 class="section-title">Users</h2>
+    <h2 class="section-title">${mi("group")} Users</h2>
     ${adminTabs("users")}
     ${usersSubnav(tab)}
     ${tab === "esncard" ? `
@@ -11824,7 +11863,7 @@ async function viewAdminOfficeForm() {
   const OFFICE_LOC = orgInfo.officeAddress;
 
   $app.innerHTML = `
-    <h2 class="section-title">New office hours</h2>
+    <h2 class="section-title">${mi("meeting_room")} New office hours</h2>
     <div class="form-actions" style="margin:0 0 14px">
       <a href="/admin" class="btn btn-ghost btn-sm btn-ink">← Admin</a>
       <a href="/office" class="btn btn-ghost btn-sm btn-ink">${mi("visibility", "sm")} Office page</a>
@@ -12103,7 +12142,7 @@ async function viewAdminEventForm(eventId, dupFromId) {
               const on = Array.isArray(f?.tagIds) ? f.tagIds.includes(t.id) : f?.tagId === t.id;
               return `<label title="${esc(t.esnCause ? `ESN cause: ${t.esnCause}` : "")}" style="display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);border-radius:20px;padding:6px 12px;cursor:pointer;font-size:.88rem">
                 <input type="checkbox" class="f-tag-cb" value="${esc(t.id)}" ${on ? "checked" : ""} style="accent-color:${esc(t.color || "#2E3192")}" />
-                <span class="badge" style="background:${esc(t.color || "#2E3192")}">${esc(t.name)}</span>
+                <span class="badge" style="background:${esc(t.color || "#2E3192")};color:${readableOn(t.color || "#2E3192")}">${esc(t.name)}</span>
               </label>`;
             };
             // ONE tag list (v0.118): each tag carries its DSA type + ESN
@@ -12714,7 +12753,7 @@ async function viewAdminEventDetail(eventId) {
     <div id="ed-stats"></div>
     <div id="ed-cash"></div>
     ${eventFeedback.length ? `
-      <div class="form-card" style="margin-bottom:20px">
+      <div class="form-card">
         <strong>Feedback</strong>
         ${aiConfig.enabled ? `<button class="btn btn-sm btn-ghost btn-ink" id="btn-ai-digest" style="float:right">${jacobImg("jacob-sm")} Ask Jacob to summarize</button>` : ""}
         <div id="ai-digest-box"></div>
@@ -13154,7 +13193,7 @@ async function viewBoard(sub) {
     </div>
 
     ${isAdmin ? `
-    <details class="form-card" style="margin-bottom:22px" id="plan-meeting" ${meetings.length ? "" : "open"}>
+    <details class="form-card" id="plan-meeting" ${meetings.length ? "" : "open"}>
       <summary style="font-weight:800">${mi("add", "sm")} Plan a meeting</summary>
       <div style="margin-top:4px">
       <div class="form-grid" style="margin-top:10px">
@@ -13235,7 +13274,7 @@ async function viewBoard(sub) {
       }
       entries.sort((a, b) => a.days - b.days);
       const row = (e2) => `<li>
-        <span class="info-label">${e2.days === 0 ? "Today 🎉" : e2.days === 1 ? "Tomorrow" : `in ${e2.days} days`}</span>
+        <span class="info-label">${e2.days === 0 ? "Today" : e2.days === 1 ? "Tomorrow" : `in ${e2.days} days`}</span>
         <span><strong>${esc(e2.name)}</strong> <span class="form-hint">· ${esc(e2.tag)}</span> · ${fmtDate(e2.disp)} (turns ${e2.turns})</span>
       </li>`;
       box.innerHTML = entries.length ? `
@@ -13510,7 +13549,7 @@ async function viewBoardMeeting(id) {
       <a href="/board/meeting-${prevMeeting.id}">${esc(prevMeeting.title || "Board meeting")} · ${fmtDate(prevMeeting.start)}</a>.
       <div class="form-actions" style="margin-top:8px"><button class="btn btn-green btn-sm" id="prev-approve">${mi("check_circle")} Approve previous minutes</button></div>
     </div>` : ""}
-    <div class="form-card" style="margin-bottom:18px">
+    <div class="form-card">
       <ul class="event-info-list">
         <li><span class="info-label">When</span><span>${fmtDate(m.start)} · ${fmtTime(m.start)}</span></li>
         <li><span class="info-label">Where</span><span>${esc(m.location || "-")}</span></li>
@@ -13531,7 +13570,7 @@ async function viewBoardMeeting(id) {
     </div>
 
     <h3 class="section-title sm">Attendance</h3>
-    <div class="form-card" style="margin-bottom:18px">
+    <div class="form-card">
       ${attendance.length
         ? `<ul class="att-list">${attendance.map(attChipRow).join("")}</ul>
            ${isAdmin ? `<p class="form-hint" style="margin-top:8px">Tap a status per person - saved automatically.</p>` : ""}`
@@ -13539,7 +13578,7 @@ async function viewBoardMeeting(id) {
     </div>
 
     <h3 class="section-title sm">Function round</h3>
-    <div class="form-card" style="margin-bottom:18px">
+    <div class="form-card">
       ${fnOrder.map((fn) => canEdit ? `
         <div class="form-field" style="margin-bottom:12px">
           <label>${esc(fn)}${fn !== "General" ? ` <small class="form-hint">${esc(team.filter((t) => t.boardFunction === fn).map((t) => (t.name || "").split(" ")[0]).join(", "))}</small>` : ""}</label>
@@ -13568,11 +13607,11 @@ async function viewBoardMeeting(id) {
 
     <h3 class="section-title sm">${mi("star")} Varia &amp; other notes</h3>
     ${canEdit ? `
-      <div class="form-card" style="margin-bottom:18px">
+      <div class="form-card">
         <textarea id="mtg-minutes" rows="5" placeholder="Anything else discussed…" style="width:100%;font-family:inherit;font-size:.9rem;padding:12px;border:1px solid var(--border);border-radius:8px;background:var(--card);color:var(--ink)">${esc(m.minutes || "")}</textarea>
       </div>`
     : m.minutes
-      ? `<div class="form-card rich" style="margin-bottom:18px">${renderRich(m.minutes)}</div>`
+      ? `<div class="form-card rich">${renderRich(m.minutes)}</div>`
       : `<p class="form-hint" style="margin-bottom:18px">Nothing noted.</p>`}
 
     ${canEdit ? `
@@ -13890,7 +13929,7 @@ async function viewMyTasks() {
   mine.sort((a, b) => (a.status === b.status ? (toDate(b.createdAt)?.getTime() || 0) - (toDate(a.createdAt)?.getTime() || 0) : a.status === "open" ? -1 : 1));
 
   $app.innerHTML = `
-    <h2 class="section-title">My ESN tasks</h2>
+    <h2 class="section-title">${mi("task_alt")} My ESN tasks</h2>
     <p class="form-hint" style="margin:-6px 0 16px">Tasks the board assigned to you. Tick them off when done${canMeetings() ? ` - the full list lives in <a href="/board">Board</a>` : ""}.</p>
     ${(() => {
       if (!mine.length) return `<div class="empty-state"><div class="big">${mi("celebration")}</div><p>No tasks assigned to you right now.</p></div>`;
@@ -14089,7 +14128,7 @@ async function viewShifts() {
     eventBlocks.forEach((e) => e.shifts.sort((a, b) => (a.order || 0) - (b.order || 0) || (toDate(a.createdAt)?.getTime() || 0) - (toDate(b.createdAt)?.getTime() || 0)));
 
     $app.innerHTML = `
-      <h2 class="section-title">Shiftlists</h2>
+      <h2 class="section-title">${mi("schedule")} Shiftlists</h2>
       <p class="form-hint" style="margin:-6px 0 16px">Tap an open spot to take a shift - thanks for helping out!</p>
       ${pushOfferHtml("Get a push <strong>the day before</strong> each of your shifts?")}
       <div class="stat-row">
@@ -14109,7 +14148,7 @@ async function viewShifts() {
         </div>` : ""}
 
       ${eventBlocks.length ? eventBlocks.map((e) => `
-        <div class="form-card shift-event" style="margin-bottom:18px">
+        <div class="form-card shift-event">
           <div class="shift-event-head">
             <div><a href="/event/${e.eid}"><strong>${esc(e.title || "Event")}</strong></a><br><small class="form-hint">${fmtDate(e.start)} · ${fmtTime(e.start)}</small></div>
             ${isAdmin ? `<a class="btn btn-sm btn-ghost btn-ink" href="/admin/shifts-${e.eid}">${mi("edit", "sm")} Edit shiftlist</a>` : ""}
@@ -14280,7 +14319,7 @@ async function viewAdminShifts(eventId) {
       </div>
 
       ${shifts.length ? `
-        <div class="form-card" style="margin-bottom:18px">
+        <div class="form-card">
           <div class="form-actions" style="margin:0 0 10px">
             <label for="assign-who" style="font-weight:700;font-size:.85rem">Assign:</label>
             <select id="assign-who" class="inline-input" style="width:auto">
@@ -14511,7 +14550,7 @@ async function viewReimburse() {
 
   const render = () => {
     $app.innerHTML = `
-      <h2 class="section-title">Reimbursements</h2>
+      <h2 class="section-title">${mi("receipt_long")} Reimbursements</h2>
       <p class="form-hint" style="margin:-6px 0 16px">Paid something for ESN Gent? Request it back here - the treasurer &amp; president follow up. You'll see the status below.</p>
 
       <form class="form-card" id="reimb-form" style="max-width:760px;margin-bottom:22px">
@@ -14836,7 +14875,7 @@ async function viewAdminReimbursements(yearSel = ayStartYear()) {
         })).join("");
         const box = document.getElementById("cash-overview-box");
         box.innerHTML = events2.length ? `
-          <div class="form-card" style="margin:0 0 18px">
+          <div class="form-card">
             <strong>${mi("point_of_sale", "sm")} Cash registers - ${ayLabel(yearSel)}</strong> <span class="form-hint">(most recent first · counting happens on each event's admin page)</span>
             <div class="table-wrap cards" style="margin-top:10px"><table>
               <thead><tr><th>Event</th><th>Register</th><th>Before</th><th>After</th><th>Difference</th></tr></thead>
