@@ -157,8 +157,7 @@ h1, h2, h3 { line-height: 1.25; }
 .brand-text { font-size: 1.05rem; letter-spacing: .2px; white-space: nowrap; }
 .brand-text strong { color: var(--esn-cyan); }
 
-.main-nav { display: flex; gap: 2px; flex: 1; min-width: 0; height: 62px; align-items: stretch; overflow-x: auto; scrollbar-width: none; }
-.main-nav::-webkit-scrollbar { display: none; }
+.main-nav { display: flex; gap: 2px; flex: 1; min-width: 0; height: 62px; align-items: stretch; }
 .main-nav a {
   color: #d6d8f0;
   padding: 0 13px;
@@ -178,8 +177,14 @@ h1, h2, h3 { line-height: 1.25; }
 .header-actions { display: flex; align-items: center; gap: 10px; flex: none; }
 .user-chip { display: flex; align-items: center; gap: 6px; font-size: .88rem; white-space: nowrap; }
 .user-chip #user-name { max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
-@media (max-width: 1199px) { .main-nav a .material-symbols-rounded { display: none; } .main-nav a { padding: 0 10px; } }
-@media (max-width: 1023px) { .user-chip #user-name { display: none; } }
+/* The bar must always show every item. fitHeader() in app.js measures the
+   nav and sheds weight in this order until it fits: the name, the nav
+   icons, tighter padding, the brand text - never a hidden scroll. */
+.site-header.hdr-noname #user-name { display: none; }
+.site-header.hdr-noicons .main-nav a .material-symbols-rounded { display: none; }
+.site-header.hdr-tight .main-nav a { padding: 0 9px; font-size: .76rem; letter-spacing: .4px; }
+.site-header.hdr-tight .header-inner { gap: 14px; }
+.site-header.hdr-nobrand .brand-text { display: none; }
 .user-avatar { width: 30px; height: 30px; border-radius: 50%; border: 2px solid var(--esn-cyan); display: block; }
 .user-link { display: flex; align-items: center; gap: 8px; color: #fff; }
 .user-link:hover { text-decoration: none; opacity: .85; }

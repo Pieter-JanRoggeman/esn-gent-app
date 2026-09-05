@@ -54,8 +54,13 @@ try {
 // Version & changelog. Bump APP_VERSION and add an entry on every
 // deploy - everyone sees the number, staff see the details.
 // ------------------------------------------------------------
-const APP_VERSION = "1.1.7";
+const APP_VERSION = "1.1.8";
 const CHANGELOG = [
+  {
+    version: "1.1.8",
+    date: "2026-09-06",
+    notes: ["Header: every menu item (Board, Admin) is visible again on laptop screens - the bar tightens instead of hiding items."],
+  },
   {
     version: "1.1.7",
     date: "2026-09-06",
@@ -15308,8 +15313,24 @@ const betaBanner = document.getElementById("beta-banner");
 // Appearance lives under Account only.)
 function syncThemeToggle() { /* no header toggle */ }
 const setHeaderVar = () => { try { document.documentElement.style.setProperty("--hdr", `${document.querySelector(".site-header")?.offsetHeight || 0}px`); } catch { /* cosmetic */ } };
+// Desktop header must show every nav item (1.1.8): measure, then shed
+// weight step by step - name → nav icons → tighter → brand text.
+const HDR_STEPS = ["hdr-noname", "hdr-noicons", "hdr-tight", "hdr-nobrand"];
+function fitHeader() {
+  const hdr = document.querySelector(".site-header");
+  const nav = document.getElementById("main-nav");
+  if (!hdr || !nav || window.innerWidth <= 820) return; // mobile has its own bar
+  hdr.classList.remove(...HDR_STEPS);
+  const fits = () => nav.scrollWidth <= nav.clientWidth + 1;
+  for (const step of HDR_STEPS) { if (fits()) break; hdr.classList.add(step); }
+  setHeaderVar();
+}
 setHeaderVar();
-window.addEventListener("resize", setHeaderVar);
+fitHeader();
+window.addEventListener("resize", () => { setHeaderVar(); fitHeader(); });
+// Nav items appear/disappear with the role (staff-only, admin-only…) - refit then.
+new MutationObserver(() => fitHeader()).observe(document.getElementById("main-nav"), { attributes: true, subtree: true, attributeFilter: ["class"] });
+document.fonts?.ready?.then(fitHeader).catch(() => {});
 const footerYear = document.getElementById("footer-year");
 if (footerYear) footerYear.textContent = new Date().getFullYear();
 document.getElementById("btn-signin").onclick = signIn;
