@@ -54,8 +54,17 @@ try {
 // Version & changelog. Bump APP_VERSION and add an entry on every
 // deploy - everyone sees the number, staff see the details.
 // ------------------------------------------------------------
-const APP_VERSION = "1.1.6";
+const APP_VERSION = "1.1.7";
 const CHANGELOG = [
+  {
+    version: "1.1.7",
+    date: "2026-09-06",
+    notes: [
+      "Home is calmer: no big empty box when nothing is planned, search and filters only appear once there are more than five events, and office hours, your ESNcard and a partner deal sit together under 'Good to know'.",
+      "Header: the name and sign-out no longer wrap, sign-out is a small icon, and the light/dark switch is back under Account → Appearance only.",
+      "ESN Passport: three stamps per row on phones, the newest month open and earlier months folded into one 'Earlier months' block, and a clear order - Collections (visas, badges), Stamps, More.",
+    ],
+  },
   {
     version: "1.1.6",
     date: "2026-09-06",
@@ -2792,41 +2801,7 @@ async function viewPassport() {
         <p class="pp-cover-hint">${demoOn ? `${mi("science", "sm")} DEMO VIEW - synthetic data, nothing is saved. Click Demo again to go back. · ` : ""}Earn XP: event +10 · trip +25 · visa tier +8/+20/+40 · rate an event +3 · bucketlist tick +2 · full section +25</p>
       </div>
 
-      ${stamps.length ? (() => {
-        const stampHtml = (r, i) => {
-          const d = toDate(r.eventStart || r.createdAt);
-          const c = stampEv(r).tagColor || PALETTE[i % PALETTE.length];
-          return `
-          <a class="stamp" href="/event/${r.eventId}" style="--stamp:${esc(c)};--tilt:${(i % 5) - 2}deg">
-            <span class="stamp-ico">${mi(eventIcon({ ...stampEv(r), title: r.eventTitle }))}</span>
-            <span class="stamp-date">${d ? d.getDate() : ""} ${d ? d.toLocaleDateString("en-GB", { month: "short" }) : ""}</span>
-            <span class="stamp-title">${esc((r.eventTitle || "Event").slice(0, 36))}</span>
-          </a>`;
-        };
-        // ≤10 stamps: one grid. More: bundled per month (newest open) so a
-        // busy semester doesn't become an endless wall of circles.
-        if (stamps.length <= 10) return `<div class="stamp-grid">${stamps.map(stampHtml).join("")}</div>`;
-        const groups = {};
-        stamps.forEach((r, i) => {
-          const d = toDate(r.eventStart || r.createdAt);
-          const k = d ? `${d.getFullYear()}-${String(d.getMonth()).padStart(2, "0")}` : "0000-00";
-          (groups[k] ??= []).push([r, i]);
-        });
-        return Object.keys(groups).sort().reverse().map((k, gi) => {
-          const [yy, mm] = k.split("-").map(Number);
-          const label = k === "0000-00" ? "Earlier" : new Date(yy, mm, 1).toLocaleDateString("en-GB", { month: "long", year: "numeric" });
-          return `
-          <details class="pp-month" ${gi === 0 ? "open" : ""}>
-            <summary><strong>${label}</strong><span class="form-hint">${groups[k].length} stamp${groups[k].length === 1 ? "" : "s"} ›</span></summary>
-            <div class="stamp-grid" style="margin-bottom:4px">${groups[k].map(([r, i]) => stampHtml(r, i)).join("")}</div>
-          </details>`;
-        }).join("");
-      })() : `
-      <div class="empty-state"><div class="big">${mi("approval")}</div>
-        <p>No stamps yet - your passport fills itself when you're checked in at the door of an event.</p>
-        <p><a class="btn btn-cyan btn-sm" href="/">Find your first event</a></p>
-      </div>`}
-
+      <h3 class="pp-h">${mi("collections_bookmark", "sm")} Collections</h3>
       ${visaTags.length ? `
       <details class="pp-section">
         <summary>${mi("approval", "sm")} Visas · ${visasEarned.length}/${visaTags.length} <span class="form-hint">one per category, levels up the more you go</span></summary>
@@ -2876,6 +2851,48 @@ async function viewPassport() {
         </div>
       </details>
 
+      <h3 class="pp-h">${mi("approval", "sm")} Stamps · ${stamps.length}${stamps.length ? ` <span class="form-hint">newest first · tap a stamp to open the event</span>` : ""}</h3>
+      ${stamps.length ? (() => {
+        const stampHtml = (r, i) => {
+          const d = toDate(r.eventStart || r.createdAt);
+          const c = stampEv(r).tagColor || PALETTE[i % PALETTE.length];
+          return `
+          <a class="stamp" href="/event/${r.eventId}" style="--stamp:${esc(c)};--tilt:${(i % 5) - 2}deg">
+            <span class="stamp-ico">${mi(eventIcon({ ...stampEv(r), title: r.eventTitle }))}</span>
+            <span class="stamp-date">${d ? d.getDate() : ""} ${d ? d.toLocaleDateString("en-GB", { month: "short" }) : ""}</span>
+            <span class="stamp-title">${esc((r.eventTitle || "Event").slice(0, 36))}</span>
+          </a>`;
+        };
+        // ≤10 stamps: one grid. More: bundled per month (newest open) so a
+        // busy semester doesn't become an endless wall of circles.
+        if (stamps.length <= 10) return `<div class="stamp-grid">${stamps.map(stampHtml).join("")}</div>`;
+        const groups = {};
+        stamps.forEach((r, i) => {
+          const d = toDate(r.eventStart || r.createdAt);
+          const k = d ? `${d.getFullYear()}-${String(d.getMonth()).padStart(2, "0")}` : "0000-00";
+          (groups[k] ??= []).push([r, i]);
+        });
+        const keys = Object.keys(groups).sort().reverse();
+        const labelOf = (k) => { const [yy, mm] = k.split("-").map(Number); return k === "0000-00" ? "Earlier" : new Date(yy, mm, 1).toLocaleDateString("en-GB", { month: "long", year: "numeric" }); };
+        const block = (k) => `
+          <div class="pp-month-block">
+            <div class="pp-month-head"><strong>${labelOf(k)}</strong><span class="form-hint">${groups[k].length} stamp${groups[k].length === 1 ? "" : "s"}</span></div>
+            <div class="stamp-grid">${groups[k].map(([r, i]) => stampHtml(r, i)).join("")}</div>
+          </div>`;
+        const older = keys.slice(1);
+        const olderN = older.reduce((n, k) => n + groups[k].length, 0);
+        return block(keys[0]) + (older.length ? `
+          <details class="pp-section pp-archive">
+            <summary>${mi("inventory_2", "sm")} Earlier months · ${olderN} stamp${olderN === 1 ? "" : "s"} <span class="form-hint">${older.length} month${older.length === 1 ? "" : "s"}</span></summary>
+            <div class="pp-section-body">${older.map(block).join("")}</div>
+          </details>` : "");
+      })() : `
+      <div class="empty-state"><div class="big">${mi("approval")}</div>
+        <p>No stamps yet - your passport fills itself when you're checked in at the door of an event.</p>
+        <p><a class="btn btn-cyan btn-sm" href="/">Find your first event</a></p>
+      </div>`}
+
+      ${(stamps.length >= 3 || teamSide || (league && Array.isArray(league.rows) && league.rows.length)) ? `<h3 class="pp-h">${mi("more_horiz", "sm")} More</h3>` : ""}
       ${stamps.length >= 3 ? (() => {
         const delayMin = (r) => {
           const a = toDate(r.checkedInAt), b = toDate(r.eventStart);
@@ -4624,7 +4641,7 @@ async function viewHome() {
     ? `${thisWeek.length === 1 ? "1 event" : `${thisWeek.length} events`} this week - first up: ${esc(thisWeek[0].title)} on ${wd(thisWeek[0])}`
     : upcoming.length
       ? `Next up: ${esc(upcoming[0].title)} · ${fmtDate(upcoming[0].start)}`
-      : "No events planned right now - new ones land here first, check back soon!";
+      : "Nothing planned yet - the first events of the semester appear here.";
 
   $app.innerHTML = `
     <div class="m-greet">
@@ -4672,25 +4689,49 @@ async function viewHome() {
         ${thisWeek.filter((ev) => !ev.cancelled).slice(0, 8).map((ev) => `<a class="week-chip" href="/event/${ev.id}" style="--wc:${eventAccent(ev)}"><small>${esc(weekdayShort(ev.start))} · ${fmtTime(ev.start)}</small><strong>${esc(ev.title || "")}</strong></a>`).join("")}
       </div>
     </div>` : ""}
-    <h2 class="section-title">${mi("event")} Upcoming events</h2>
+    <h2 class="section-title">${mi("event")} Upcoming events${upcoming.length > 5 ? ` <span class="form-hint" style="font-weight:500">${upcoming.length}</span>` : ""}</h2>
+    ${upcoming.length > 5 ? `
     <div class="filter-bar">
       <input id="filter-q" type="search" placeholder="Search events, places…" value="${esc(homeFilter.q)}" />
       <div class="filter-chips">
         ${CHIPS.map((c) => `<button class="chip ${homeFilter.chip === c.k ? "active" : ""}" data-chip="${c.k}">${c.label}</button>`).join("")}
       </div>
-    </div>
+    </div>` : ""}
     <div id="home-events"></div>
-    ${nextOffice ? `
-    <h2 class="section-title">${mi("meeting_room")} Office hours</h2>
-    <a class="news-strip" href="/office">
-      <span class="news-strip-icon">${mi("meeting_room")}</span>
-      <span class="news-strip-main">
-        <small>Next session · ${fmtDate(nextOffice.start)} · ${fmtTime(nextOffice.start)}${nextOffice.end ? `–${fmtTime(nextOffice.end)}` : ""}</small>
-        <strong>${esc(nextOffice.location || "The ESN office")} - drop in for your ESNcard, shop pickups, questions or just a chat</strong>
-      </span>
-      <span class="chev">›</span>
-    </a>` : ""}
-    <div id="home-partner"></div>
+
+    <h2 class="section-title">${mi("info")} Good to know</h2>
+    <div class="home-grid">
+      ${nextOffice ? `
+      <a class="home-tile" href="/office">
+        <span class="home-tile-icon" style="--tc:var(--esn-magenta)">${mi("meeting_room")}</span>
+        <span class="home-tile-main">
+          <small>Office hours · next ${fmtDate(nextOffice.start)} · ${fmtTime(nextOffice.start)}${nextOffice.end ? `–${fmtTime(nextOffice.end)}` : ""}</small>
+          <strong>${esc(nextOffice.location || "The ESN office")}</strong>
+          <span class="form-hint">ESNcard pickup, shop orders, questions.</span>
+        </span>
+        <span class="chev">›</span>
+      </a>` : `
+      <a class="home-tile" href="/office">
+        <span class="home-tile-icon" style="--tc:var(--esn-magenta)">${mi("meeting_room")}</span>
+        <span class="home-tile-main">
+          <small>Office hours</small>
+          <strong>${esc(orgInfo.officeAddress || "The ESN office")}</strong>
+          <span class="form-hint">Times are announced on the Office page.</span>
+        </span>
+        <span class="chev">›</span>
+      </a>`}
+      ${currentUser && !hasVerifiedCard() && !isAlumni() && !myRole ? `
+      <a class="home-tile" href="/esncard">
+        <span class="home-tile-icon" style="--tc:var(--esn-cyan)">${mi("badge")}</span>
+        <span class="home-tile-main">
+          <small>ESNcard</small>
+          <strong>Member prices on every event and trip</strong>
+          <span class="form-hint">Apply in two minutes, pick it up at the office.</span>
+        </span>
+        <span class="chev">›</span>
+      </a>` : ""}
+      <div id="home-partner" class="home-tile home-tile-deal hidden"></div>
+    </div>
   `;
 
   // Rotating ESNcard partner (v0.118) - one deal a visit, freshly random,
@@ -4703,20 +4744,16 @@ async function viewHome() {
       const active = homePartners.filter((p2) => (p2.status || "active") === "active"); // ended/pipeline partners never on the homepage
       if (!active.length) return;
       const p = active[Math.floor(Math.random() * active.length)];
+      box.classList.remove("hidden");
       box.innerHTML = `
-        <h2 class="section-title">ESNcard deal</h2>
-        <div class="deal-card" style="max-width:560px">
-          <div class="deal-head">
-            ${p.logo ? `<img class="deal-logo" src="${esc(p.logo)}" alt="" loading="lazy" />` : `<span class="deal-logo deal-logo-ph">${esc((p.name || "?")[0].toUpperCase())}</span>`}
-            <strong>${esc(p.name || "")}</strong>
-          </div>
-          <p class="deal-text">${esc(p.deal || "")}</p>
-          ${p.location ? `<p class="form-hint">${mi("location_on", "sm")} ${esc(p.location)}</p>` : ""}
-          <div class="form-actions" style="margin-top:auto">
-            <a class="btn btn-sm btn-cyan" href="/deals">${mi("sell", "sm")} All ESNcard deals</a>
-            ${p.website ? `<a class="btn btn-sm btn-ghost btn-ink" href="${esc(p.website)}" target="_blank" rel="noopener">${mi("language", "sm")} Website</a>` : ""}
-          </div>
-        </div>`;
+        <a class="home-tile-link" href="/deals">
+          ${p.logo ? `<img class="deal-logo" src="${esc(p.logo)}" alt="" loading="lazy" />` : `<span class="deal-logo deal-logo-ph">${esc((p.name || "?")[0].toUpperCase())}</span>`}
+          <span class="home-tile-main">
+            <small>ESNcard deal · ${esc(p.name || "")}</small>
+            <strong>${esc(p.deal || "")}</strong>
+            <span class="form-hint">${p.location ? `${esc(p.location)} · ` : ""}All deals ›</span>
+          </span>
+        </a>`;
     } catch { /* the homepage works fine without a deal card */ }
   })();
 
@@ -4726,8 +4763,8 @@ async function viewHome() {
     const box = document.getElementById("home-events");
     if (!list.length) {
       box.innerHTML = upcoming.length
-        ? `<div class="empty-state"><div class="big">${mi("search_off")}</div><p>No events match your search.</p></div>`
-        : `<div class="empty-state"><div class="big">${mi("event_busy")}</div><p>No upcoming events yet - check back soon!</p></div>`;
+        ? `<p class="home-empty">${mi("search_off", "sm")} No events match your search.</p>`
+        : `<p class="home-empty">${mi("event_upcoming", "sm")} No upcoming events yet. Follow <a href="/news">News</a> or turn on <a href="/notifications">notifications</a> to hear first.</p>`;
       return;
     }
     // Default view: split into "This week" / "Later" groups (each event
@@ -4748,7 +4785,7 @@ async function viewHome() {
     try { localStorage.setItem("esnInstallDismissed", "1"); } catch { /* fine */ }
     document.getElementById("install-strip")?.remove();
   });
-  document.getElementById("filter-q").addEventListener("input", (e) => {
+  document.getElementById("filter-q")?.addEventListener("input", (e) => {
     homeFilter.q = e.target.value;
     renderList();
   });
@@ -15267,22 +15304,9 @@ const betaBanner = document.getElementById("beta-banner");
   const stamp = cfg.updatedAt?.toMillis ? cfg.updatedAt.toMillis() : "x";
   show(`banner-dismissed-${stamp}`, cfg.dismissible !== false);
 })();
-// Header theme toggle (v1.1.6): one click flips light/dark; the three-way
-// setting (incl. "follow device") stays under Account → Appearance.
-function syncThemeToggle() {
-  const b = document.getElementById("btn-theme-top");
-  if (!b) return;
-  const dark = document.documentElement.dataset.theme === "dark";
-  b.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">${dark ? "light_mode" : "dark_mode"}</span>`;
-  b.title = dark ? "Switch to light mode" : "Switch to dark mode";
-}
-document.getElementById("btn-theme-top")?.addEventListener("click", () => {
-  setThemePref(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
-  applyTheme();
-  const lbl = document.getElementById("theme-label");
-  if (lbl) lbl.textContent = themePref() === "dark" ? "Dark" : "Light";
-});
-syncThemeToggle();
+// (The header light/dark toggle from 1.1.6 was dropped again in 1.1.7 -
+// Appearance lives under Account only.)
+function syncThemeToggle() { /* no header toggle */ }
 const setHeaderVar = () => { try { document.documentElement.style.setProperty("--hdr", `${document.querySelector(".site-header")?.offsetHeight || 0}px`); } catch { /* cosmetic */ } };
 setHeaderVar();
 window.addEventListener("resize", setHeaderVar);
