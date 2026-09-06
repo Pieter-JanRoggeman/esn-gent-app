@@ -62,6 +62,9 @@ const smtpPassword = defineSecret("SMTP_PASSWORD");
 // ESN International gave us a Cloudflare-bypass header so our server can
 // read the ESNcard verification API (v0.132). Header: x-bypass-cf-api.
 const esncardBypass = defineSecret("ESNCARD_BYPASS_KEY");
+// Google Calendar as the ESN Gent Google account (1.1.9): the OAuth web
+// client's secret. Set with `firebase functions:secrets:set GOOGLE_OAUTH_CLIENT_SECRET`.
+const googleOauthSecret = defineSecret("GOOGLE_OAUTH_CLIENT_SECRET");
 
 const MAX_QTY = 10;
 
@@ -392,9 +395,23 @@ function confirmationEmail(reg, ev) {
 const DEFAULT_TEMPLATES = {
   esncardReady: {
     subject: "Your ESNcard number is ready",
-    body: "Hi {firstName},\n\nGood news - your ESNcard number is {cardNumber}.\n\n{activationNote}\n\nYou can pick up the physical card at the ESN office during our office hours (never at events). The current times are always here: {officeUrl}\n\nYour card and barcode are already in the app under your profile.\n\nSee you soon!\nThe ESN Gent team",
+    body: "Hi {firstName},\n\nGood news - your ESNcard number is {cardNumber}.\n\n{activationNote}\n\nYou can pick up the physical card at the ESN office during our office hours (never at events). The current times are always here: {officeUrl}\n\n{goodieBag}\n\nYour card and barcode are already in the app under your profile.\n\nSee you soon!\nThe ESN Gent team",
   },
 };
+// Goodie bag at pickup (1.1.10): settings/esncard.goodieBag + goodieBagText,
+// switched in Admin → Settings. Empty string when it's off.
+const GOODIE_DEFAULT_TEXT = "You also get a goodie bag when you pick up your card at the office.";
+async function goodieBagLine() {
+  try {
+    const s = await db.collection("settings").doc("esncard").get();
+    if (s.exists && s.data().goodieBag === true) return String(s.data().goodieBagText || "").trim() || GOODIE_DEFAULT_TEXT;
+  } catch { /* off */ }
+  return "";
+}
+// Optional placeholders vanish together with their blank line when empty,
+// instead of printing a literal "{goodieBag}".
+const dropEmptyPlaceholder = (str, key) =>
+  String(str).replace(new RegExp(`\\{${key}\\}`, "g"), "").replace(/\n{3,}/g, "\n\n").trim();
 async function getEmailTemplate(key) {
   let t = null;
   try {
@@ -582,6 +599,7 @@ exports.esncardReadyMail = onDocumentWritten(
       const activationNote = active
         ? `It is valid until ${fmtDateBE(a.expiresAt)} and your member discounts already work in the app.`
         : `To start using it, register the card at esncard.org with this number - once it is registered your membership is active and member prices apply automatically in the app.`;
+      const goodieBag = await goodieBagLine();
       const vars = {
         firstName: firstName || "there",
         name: `${a.firstName || ""} ${a.lastName || ""}`.trim() || firstName || "there",
@@ -590,9 +608,10 @@ exports.esncardReadyMail = onDocumentWritten(
         activationNote,
         officeHours: officeHours || "see the app for times & location",
         officeUrl: `${APP_URL}/office`,
+        goodieBag,
       };
       const subject = fillTemplate(t.subject, vars);
-      const body = fillTemplate(t.body, vars);
+      const body = goodieBag ? fillTemplate(t.body, vars) : dropEmptyPlaceholder(fillTemplate(t.body, vars), "goodieBag");
       await queueAndSend(cfg, {
         to: email,
         subject,
@@ -666,8 +685,9 @@ exports.sendTestEmail = onCall({ secrets: [smtpPassword] }, async (request) => {
       activationNote: "To start using it, register the card at esncard.org with this number - once it is registered your membership is active and member prices apply automatically in the app.",
       officeHours: officeHours || "see the app for times & location",
       officeUrl: `${APP_URL}/office`,
+      goodieBag: await goodieBagLine(),
     };
-    const body = fillTemplate(t.body, vars);
+    const body = vars.goodieBag ? fillTemplate(t.body, vars) : dropEmptyPlaceholder(fillTemplate(t.body, vars), "goodieBag");
     msg = {
       to,
       subject: `[PREVIEW] ${fillTemplate(t.subject, vars)}`,
@@ -810,19 +830,28 @@ async function clearWaitlistFor(eventId, uid) {
     await Promise.all(snap.docs.map((d) => d.ref.delete()));
   } catch { /* best effort */ }
 }
+// Board-set registration state (1.1.10): closed by hand, or past the
+// optional deadline. Sold-out-by-hand is a separate flag (soldOutManual).
+function regClosedNow(event) {
+  if (event.regClosed === true) return true;
+  const d = event.regDeadline;
+  return !!(d && typeof d.toMillis === "function" && d.toMillis() < Date.now());
+}
 async function promoteWaitlist(eventId) {
   try {
     const evSnap = await db.collection("events").doc(eventId).get();
     if (!evSnap.exists) return;
     const event = evSnap.data();
-    if (event.cancelled || !event.published || !event.capacity) return;
+    if (event.cancelled || !event.published) return;
+    if (regClosedNow(event) || event.soldOutManual === true) return;
     if (event.start && event.start.toDate() < new Date()) return;
     const wl = await db.collection("waitlist").where("eventId", "==", eventId).get();
     if (wl.empty) return;
     const now = Date.now();
     const entries = wl.docs.map((d) => ({ ref: d.ref, ...d.data() }));
     const holds = entries.filter((w) => w.offerExpiresAt && w.offerExpiresAt.toMillis() > now).length;
-    const freeSpots = event.capacity - (event.ticketsSold || 0) - (event.pendingHold || 0) - holds;
+    // No capacity = the board un-marked a hand-set "sold out": everyone waiting may come in.
+    const freeSpots = event.capacity ? event.capacity - (event.ticketsSold || 0) - (event.pendingHold || 0) - holds : Infinity;
     if (freeSpots <= 0) return;
     const waiting = entries
       .filter((w) => !w.offerExpiresAt)
@@ -915,6 +944,12 @@ exports.createCheckoutSession = onCall(
     }
     if (event.cancelled) {
       throw new HttpsError("failed-precondition", "This event has been cancelled.");
+    }
+    if (regClosedNow(event)) {
+      throw new HttpsError("failed-precondition", "Registrations for this event are closed.");
+    }
+    if (event.soldOutManual === true) {
+      throw new HttpsError("resource-exhausted", "This event is sold out.");
     }
     if (event.regMode === "none" || event.regMode === "external") {
       throw new HttpsError("failed-precondition", "This event has no in-app tickets - check the event page for how to join.");
@@ -1202,6 +1237,12 @@ exports.registerFree = onCall(async (request) => {
     }
     if (event.cancelled) {
       throw new HttpsError("failed-precondition", "This event has been cancelled.");
+    }
+    if (regClosedNow(event)) {
+      throw new HttpsError("failed-precondition", "Registrations for this event are closed.");
+    }
+    if (event.soldOutManual === true) {
+      throw new HttpsError("resource-exhausted", "This event is sold out.");
     }
     if (event.regMode === "none" || event.regMode === "external") {
       throw new HttpsError("failed-precondition", "This event has no in-app tickets - check the event page for how to join.");
@@ -1942,7 +1983,7 @@ exports.createMerchCheckout = onCall(
 // Stripe webhook - confirms payments, cleans up expired checkouts
 // ------------------------------------------------------------
 exports.stripeWebhook = onRequest(
-  { secrets: [stripeSecretKey, stripeWebhookSecret] },
+  { secrets: [stripeSecretKey, stripeWebhookSecret, googleOauthSecret] },
   async (req, res) => {
     const stripe = new Stripe(stripeSecretKey.value());
 
@@ -2068,9 +2109,50 @@ exports.stripeWebhook = onRequest(
 // ============================================================
 const calAuth = new GoogleAuth({ scopes: ["https://www.googleapis.com/auth/calendar"] });
 
-async function calFetch(method, calId, path, body) {
+// Who writes to the calendars (1.1.9). Preferred: the ESN Gent Google
+// account itself, through an OAuth refresh token the superadmin obtained
+// once via Admin → Settings → "Connect Google account" (stored in
+// private/calendarAuth - a collection no client can read). Then every
+// synced event is created BY esn.gent@gmail.com instead of showing
+// "Created by: 8992…-compute@developer.gserviceaccount.com".
+// Fallback: the functions' service account, exactly as before.
+const CAL_SCOPES = "https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/userinfo.email";
+let calTokenCache = { token: null, exp: 0 };
+function oauthClientSecret() { try { return googleOauthSecret.value() || ""; } catch { return ""; } }
+async function calendarToken() {
+  const ref = db.collection("private").doc("calendarAuth");
+  const snap = await ref.get();
+  const auth = snap.exists ? snap.data() : null;
+  if (auth?.refreshToken && auth?.clientId) {
+    if (calTokenCache.token && calTokenCache.exp > Date.now() + 60e3) return calTokenCache.token;
+    const secret = oauthClientSecret();
+    if (secret) {
+      const res = await fetch("https://oauth2.googleapis.com/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ client_id: auth.clientId, client_secret: secret, refresh_token: auth.refreshToken, grant_type: "refresh_token" }),
+      });
+      if (res.ok) {
+        const j = await res.json();
+        calTokenCache = { token: j.access_token, exp: Date.now() + (j.expires_in || 3600) * 1000 };
+        if (auth.broken) await ref.set({ broken: false, error: FieldValue.delete() }, { merge: true }).catch(() => {});
+        return j.access_token;
+      }
+      const errText = (await res.text()).slice(0, 300);
+      console.error("calendar OAuth refresh failed:", errText);
+      // Revoked / expired consent: flag it so Settings shows "reconnect", keep syncing via the service account.
+      await ref.set({ broken: true, brokenAt: FieldValue.serverTimestamp(), error: errText }, { merge: true }).catch(() => {});
+    } else {
+      console.warn("calendarAuth present but GOOGLE_OAUTH_CLIENT_SECRET is not set - using the service account");
+    }
+  }
   const client = await calAuth.getClient();
   const { token } = await client.getAccessToken();
+  return token;
+}
+
+async function calFetch(method, calId, path, body) {
+  const token = await calendarToken();
   const res = await fetch(
     `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calId)}${path}`,
     {
@@ -2285,7 +2367,7 @@ const dsaMeetingFingerprint = (d) => d && JSON.stringify({
 });
 // (Separate function from onBoardMeetingWrite - that one does the board
 // Google Calendar and early-returns when no calendar is configured.)
-exports.onBoardMeetingDsa = onDocumentWritten({ document: "boardMeetings/{meetingId}", secrets: [dsaApiKey] }, async (event) => {
+exports.onBoardMeetingDsa = onDocumentWritten({ document: "boardMeetings/{meetingId}", secrets: [dsaApiKey, googleOauthSecret] }, async (event) => {
   const before = event.data.before.exists ? event.data.before.data() : null;
   const after = event.data.after.exists ? event.data.after.data() : null;
   // Fingerprint excludes dsaActivityId → our own id write-back can't loop.
@@ -2329,7 +2411,7 @@ exports.onBoardMeetingDsa = onDocumentWritten({ document: "boardMeetings/{meetin
 });
 
 function gcalBodyForEvent(id, ev) {
-  const soldOut = !!(ev.capacity && (ev.ticketsSold || 0) >= ev.capacity) && !ev.cancelled;
+  const soldOut = (ev.soldOutManual === true || !!(ev.capacity && (ev.ticketsSold || 0) >= ev.capacity)) && !ev.cancelled;
   const start = ev.start.toDate();
   const end = ev.end ? ev.end.toDate() : new Date(start.getTime() + 2 * 3600 * 1000);
   return {
@@ -2364,12 +2446,12 @@ const eventCalFingerprint = (d) => d && JSON.stringify({
   e: d.end?.toMillis ? d.end.toMillis() : null,
   p: !!d.published, c: !!d.cancelled,
   cs: d.calSync !== false, // per-event calendar switch (v0.125)
-  so: !!(d.capacity && (d.ticketsSold || 0) >= d.capacity),
+  so: d.soldOutManual === true || !!(d.capacity && (d.ticketsSold || 0) >= d.capacity),
   au: Array.isArray(d.audience) ? d.audience.join(",") : "", // team events (un)restricted → resync
 });
 
 exports.onEventWrite = onDocumentWritten(
-  { document: "events/{eventId}", secrets: [dsaApiKey] },
+  { document: "events/{eventId}", secrets: [dsaApiKey, googleOauthSecret] },
   async (event) => {
   const before = event.data.before.exists ? event.data.before.data() : null;
   const after = event.data.after.exists ? event.data.after.data() : null;
@@ -2388,8 +2470,10 @@ exports.onEventWrite = onDocumentWritten(
           `/event/${event.params.eventId}`);
       }
       // Sold-out → spot freed: offer it to the FIRST waitlist person (24h hold).
-      const wasFull = before && before.capacity && (before.ticketsSold || 0) >= before.capacity;
-      const nowFree = after.capacity && (after.ticketsSold || 0) < after.capacity;
+      // Also when the board reopens registrations or un-marks "sold out" (1.1.10).
+      const blockedOf = (d) => d.soldOutManual === true || regClosedNow(d) || !!(d.capacity && (d.ticketsSold || 0) >= d.capacity);
+      const wasFull = before && blockedOf(before);
+      const nowFree = !blockedOf(after) && (!after.capacity || (after.ticketsSold || 0) < after.capacity);
       if (wasFull && nowFree && after.published && !after.cancelled) {
         await promoteWaitlist(event.params.eventId);
       }
@@ -2437,7 +2521,7 @@ const meetingCalFingerprint = (d) => d && JSON.stringify({
   r: d.calResyncAt?.toMillis ? d.calResyncAt.toMillis() : 0, // manual re-sync nudge
 });
 
-exports.onBoardMeetingWrite = onDocumentWritten("boardMeetings/{meetingId}", async (event) => {
+exports.onBoardMeetingWrite = onDocumentWritten({ document: "boardMeetings/{meetingId}", secrets: [googleOauthSecret] }, async (event) => {
   const before = event.data.before.exists ? event.data.before.data() : null;
   const after = event.data.after.exists ? event.data.after.data() : null;
   const { boardCalendarId } = await calendarIds();
@@ -2463,7 +2547,7 @@ exports.onBoardMeetingWrite = onDocumentWritten("boardMeetings/{meetingId}", asy
 });
 
 // Manual full resync (the admin "Sync calendar" button) - board only.
-exports.syncCalendarAll = onCall({ timeoutSeconds: 300 }, async (request) => {
+exports.syncCalendarAll = onCall({ timeoutSeconds: 300, secrets: [googleOauthSecret] }, async (request) => {
   if (!request.auth) throw new HttpsError("unauthenticated", "Sign in first.");
   const adminSnap = await db.collection("admins").doc(request.auth.uid).get();
   const role = adminSnap.exists ? (adminSnap.data().role || "superadmin") : null;
@@ -2474,6 +2558,10 @@ exports.syncCalendarAll = onCall({ timeoutSeconds: 300 }, async (request) => {
   if (!publicCalendarId) {
     throw new HttpsError("failed-precondition", "Calendar IDs not stored yet - the app saves them when you click Sync.");
   }
+  // recreate (1.1.9): delete + insert every upcoming entry so the calendar
+  // shows the connected Google account as creator instead of the old
+  // service account. Only needed once, right after connecting.
+  const recreate = request.data?.recreate === true;
   const cutoff = new Date(Date.now() - 24 * 3600 * 1000);
   const snap = await db.collection("events")
     .where("published", "==", true).where("start", ">=", cutoff).get();
@@ -2489,11 +2577,135 @@ exports.syncCalendarAll = onCall({ timeoutSeconds: 300 }, async (request) => {
         }
         continue;
       }
-      await calUpsert(publicCalendarId, d.ref, ed.googleEventId || null, gcalBodyForEvent(d.id, ed));
+      let gid = ed.googleEventId || null;
+      if (recreate && gid) {
+        await calFetch("DELETE", publicCalendarId, `/events/${gid}`).catch(() => {});
+        gid = null;
+      }
+      await calUpsert(publicCalendarId, d.ref, gid, gcalBodyForEvent(d.id, ed));
       synced++;
     } catch (err) { failed.push({ id: d.id, title: d.data().title || "", error: err.message }); }
   }
-  return { synced, failed };
+  // Board meetings live on the internal calendar - same treatment.
+  const { boardCalendarId } = await calendarIds();
+  if (boardCalendarId) {
+    const ms = await db.collection("boardMeetings").where("start", ">=", cutoff).get().catch(() => null);
+    for (const d of (ms?.docs || [])) {
+      try {
+        const m = d.data();
+        let gid = m.googleEventId || null;
+        if (recreate && gid) { await calFetch("DELETE", boardCalendarId, `/events/${gid}`).catch(() => {}); gid = null; }
+        const start = m.start.toDate();
+        const end = new Date(start.getTime() + 2 * 3600 * 1000);
+        await calUpsert(boardCalendarId, d.ref, gid, {
+          summary: m.title || "Board meeting",
+          location: m.location || "",
+          description: `Board meeting - minutes & agenda in the ESN Gent App: ${APP_URL}/board`,
+          start: { dateTime: start.toISOString(), timeZone: "Europe/Brussels" },
+          end: { dateTime: end.toISOString(), timeZone: "Europe/Brussels" },
+        });
+        synced++;
+      } catch (err) { failed.push({ id: d.id, title: d.data().title || "meeting", error: err.message }); }
+    }
+  }
+  return { synced, failed, recreated: recreate };
+});
+
+// ------------------------------------------------------------
+// Google account connection for the calendar (1.1.9).
+//   calendarAuth({ action: "status" })     → who is connected
+//   calendarAuth({ action: "start", clientId }) → the Google consent URL
+//   calendarAuth({ action: "disconnect" }) → back to the service account
+//   calendarOAuthCallback (HTTP)           → Google redirects here with the code
+// Superadmin only. The refresh token never leaves the server.
+// ------------------------------------------------------------
+function oauthRedirectUri() {
+  return `https://us-central1-${process.env.GCLOUD_PROJECT}.cloudfunctions.net/calendarOAuthCallback`;
+}
+exports.calendarAuth = onCall({ secrets: [googleOauthSecret] }, async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Sign in first.");
+  const adminSnap = await db.collection("admins").doc(request.auth.uid).get();
+  const role = adminSnap.exists ? (adminSnap.data().role || "superadmin") : null;
+  if (role !== "superadmin") throw new HttpsError("permission-denied", "Superadmin only.");
+  const ref = db.collection("private").doc("calendarAuth");
+  const action = request.data?.action || "status";
+  const snap = await ref.get();
+  const cur = snap.exists ? snap.data() : {};
+  const status = () => ({
+    connected: !!cur.refreshToken,
+    email: cur.email || null,
+    connectedAt: cur.connectedAt?.toMillis ? cur.connectedAt.toMillis() : null,
+    broken: cur.broken === true,
+    error: cur.broken ? (cur.error || "") : "",
+    clientId: cur.clientId || null,
+    secretSet: !!oauthClientSecret(),
+    redirectUri: oauthRedirectUri(),
+  });
+  if (action === "status") return status();
+  if (action === "disconnect") {
+    await ref.delete().catch(() => {});
+    calTokenCache = { token: null, exp: 0 };
+    return { connected: false };
+  }
+  if (action === "start") {
+    const clientId = String(request.data?.clientId || cur.clientId || "").trim();
+    if (!/^[0-9]+-[a-z0-9]+\.apps\.googleusercontent\.com$/.test(clientId)) {
+      throw new HttpsError("invalid-argument", "Paste the OAuth web client ID first (ends in .apps.googleusercontent.com).");
+    }
+    if (!oauthClientSecret()) {
+      throw new HttpsError("failed-precondition", "The client secret isn't set yet: run `firebase functions:secrets:set GOOGLE_OAUTH_CLIENT_SECRET` and redeploy the functions.");
+    }
+    const state = require("crypto").randomBytes(24).toString("hex");
+    await ref.set({ clientId, pendingState: state, pendingUid: request.auth.uid, pendingAt: FieldValue.serverTimestamp() }, { merge: true });
+    const url = "https://accounts.google.com/o/oauth2/v2/auth?" + new URLSearchParams({
+      client_id: clientId, redirect_uri: oauthRedirectUri(), response_type: "code",
+      scope: CAL_SCOPES, access_type: "offline", prompt: "consent", include_granted_scopes: "true", state,
+    }).toString();
+    return { url };
+  }
+  throw new HttpsError("invalid-argument", "Unknown action.");
+});
+
+exports.calendarOAuthCallback = onRequest({ secrets: [googleOauthSecret] }, async (req, res) => {
+  const page = (title, body, ok) => res.status(ok ? 200 : 400).set("Content-Type", "text/html; charset=utf-8").send(
+    `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title>` +
+    `<body style="font-family:system-ui,sans-serif;max-width:520px;margin:60px auto;padding:0 20px;color:#191a2e">` +
+    `<h2 style="color:${ok ? "#7AC143" : "#D7263D"}">${title}</h2><p>${body}</p>` +
+    `<p><a href="${APP_URL}/admin/settings" style="color:#2E3192;font-weight:700">Back to the app</a></p></body>`);
+  try {
+    const { code, state, error } = req.query;
+    if (error) return page("Not connected", `Google said: ${String(error)}. Nothing changed.`, false);
+    const ref = db.collection("private").doc("calendarAuth");
+    const snap = await ref.get();
+    const cur = snap.exists ? snap.data() : {};
+    const age = cur.pendingAt?.toMillis ? Date.now() - cur.pendingAt.toMillis() : Infinity;
+    if (!code || !state || state !== cur.pendingState || age > 15 * 60e3) {
+      return page("Link expired", "Start again from Admin → Settings → Google Calendar → Connect.", false);
+    }
+    const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ code: String(code), client_id: cur.clientId, client_secret: oauthClientSecret(), redirect_uri: oauthRedirectUri(), grant_type: "authorization_code" }),
+    });
+    const tok = await tokenRes.json().catch(() => ({}));
+    if (!tokenRes.ok || !tok.refresh_token) {
+      return page("Not connected", `Google didn't return a permanent token (${tok.error || tokenRes.status}). Make sure you tick the calendar permission and try again.`, false);
+    }
+    let email = null;
+    try {
+      const ui = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", { headers: { Authorization: `Bearer ${tok.access_token}` } });
+      if (ui.ok) email = (await ui.json()).email || null;
+    } catch { /* optional */ }
+    await ref.set({
+      refreshToken: tok.refresh_token, email, connectedAt: FieldValue.serverTimestamp(), connectedBy: cur.pendingUid || null,
+      broken: false, error: FieldValue.delete(), pendingState: FieldValue.delete(), pendingUid: FieldValue.delete(), pendingAt: FieldValue.delete(),
+    }, { merge: true });
+    calTokenCache = { token: null, exp: 0 };
+    return page("Connected", `Calendar events will now be created by <strong>${email || "the account you just chose"}</strong>. Back in the app, use <em>Re-create upcoming events</em> once so existing entries change creator too.`, true);
+  } catch (err) {
+    await logServerError("calendarOAuthCallback", err);
+    return page("Something went wrong", String(err?.message || err), false);
+  }
 });
 
 // ============================================================

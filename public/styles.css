@@ -343,6 +343,15 @@ h1, h2, h3 { line-height: 1.25; }
 html[data-theme="dark"] .price-tag.free { color: #8fd05a; }
 .price-strike { text-decoration: line-through; opacity: .5; font-size: .85em; font-weight: 700; }
 .member-note { font-size: .78rem; color: var(--esn-dark); font-weight: 700; }
+/* Goodie bag line (1.1.10) - wherever the card pickup is mentioned. */
+.goodie-note { display: flex; gap: 8px; align-items: flex-start; margin: 10px 0 0; padding: 10px 12px; border-radius: 10px;
+  background: color-mix(in srgb, var(--esn-green) 14%, var(--card)); border: 1px solid color-mix(in srgb, var(--esn-green) 45%, var(--border));
+  font-size: .88rem; line-height: 1.4; color: var(--ink); }
+.goodie-note .material-symbols-rounded { color: var(--esn-green); flex: none; margin-top: 1px; }
+.goodie-note.compact { padding: 7px 10px; font-size: .84rem; margin: 6px 0 10px; }
+/* Registration controls card on the admin event page (1.1.10). */
+.regctl-head { display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; }
+.regctl-row { margin: 10px 0 0; gap: 8px; }
 
 .badge {
   display: inline-block;
@@ -1814,6 +1823,7 @@ html[data-auth="1"] #btn-signin { display: none; }
   .container { padding: 0 16px; }
   .filter-chips { padding: 2px 16px 6px; margin: 0 -16px; }
   .form-actions .btn { flex: 1 1 calc(50% - 5px); white-space: nowrap; }
+  .regctl-row .btn, .regctl-row .form-field { flex: 1 1 100%; }
   .success-panel { padding: 34px 20px; }
   .map-embed { height: 200px; }
   /* ticket-type / variant rows: name on its own line, numbers below */

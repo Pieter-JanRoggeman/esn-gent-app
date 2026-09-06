@@ -54,8 +54,21 @@ try {
 // Version & changelog. Bump APP_VERSION and add an entry on every
 // deploy - everyone sees the number, staff see the details.
 // ------------------------------------------------------------
-const APP_VERSION = "1.1.8";
+const APP_VERSION = "1.1.10";
 const CHANGELOG = [
+  {
+    version: "1.1.10",
+    date: "2026-09-06",
+    notes: [
+      "Board: stop or reopen registrations, mark an event sold out (and unmark it) or set a registration deadline - in the Registrations card on the event's admin page and in the event form. Students see 'Registrations closed' or 'Sold out' instead of the buy button and 'Register by …' while a deadline is coming; the server refuses tickets either way, existing tickets stay valid.",
+      "Board: Settings → Goodie bag at pickup. Switch it on and write what's in it - the line shows on the ESNcard form, the account page, the shop tile and the office page, and fills the {goodieBag} placeholder in the 'card ready' e-mail. Off = every mention disappears.",
+    ],
+  },
+  {
+    version: "1.1.9",
+    date: "2026-09-06",
+    notes: ["Board: the Google Calendar sync can act as the ESN Gent Google account itself (Settings → Google Calendar sync → Connect), so entries no longer say 'Created by: …compute@developer.gserviceaccount.com'. A one-time 'Re-create upcoming events' fixes the existing ones."],
+  },
   {
     version: "1.1.8",
     date: "2026-09-06",
@@ -1339,11 +1352,21 @@ function memberEligible(ev = null) {
 // proofRequired: welcome-week switch (v0.105) - when false, the apply form
 // hides the proof-of-exchange upload entirely and applications go through
 // without one. Toggled in Admin → Settings → ESNcard.
-let cardPricing = { student: 1500, volunteer: 750, validityMonths: 12, proofRequired: true, acceptAvailable: false, cashEnabled: false };
+let cardPricing = { student: 1500, volunteer: 750, validityMonths: 12, proofRequired: true, acceptAvailable: false, cashEnabled: false, goodieBag: false, goodieBagText: "" };
 // Cash at the office is OFF by default since v1.4.0 - students pay online;
 // the superadmin can switch it on under Settings → ESNcard (busy weeks, card
 // terminal down, …). The board can always register cash it did receive.
 function cashAllowed() { return cardPricing.cashEnabled === true; }
+// Goodie bag at pickup (1.1.10): board switch + text in Settings → ESNcard.
+// Off = not a word about it anywhere (also empties the e-mail placeholder).
+const GOODIE_DEFAULT_TEXT = "You also get a goodie bag when you pick up your card at the office.";
+function goodieBagText() {
+  return cardPricing.goodieBag === true ? ((cardPricing.goodieBagText || "").trim() || GOODIE_DEFAULT_TEXT) : "";
+}
+function goodieBagHtml(cls = "") {
+  const t = goodieBagText();
+  return t ? `<p class="goodie-note ${cls}">${mi("redeem", "sm")}<span>${esc(t)}</span></p>` : "";
+}
 // Org-wide event defaults (settings/events) - standard cancellation deadline
 // & refund fee. Per-event values always win; these fill the gaps.
 let eventDefaults = { defaultCancelHours: 24, defaultRefundFee: 100, waitlistHours: 12 };
@@ -3616,6 +3639,8 @@ let faqCustom = null;
       if (typeof d.proofRequired === "boolean") cardPricing.proofRequired = d.proofRequired;
       if (typeof d.acceptAvailable === "boolean") cardPricing.acceptAvailable = d.acceptAvailable;
       if (typeof d.cashEnabled === "boolean") cardPricing.cashEnabled = d.cashEnabled;
+      if (typeof d.goodieBag === "boolean") cardPricing.goodieBag = d.goodieBag;
+      if (typeof d.goodieBagText === "string") cardPricing.goodieBagText = d.goodieBagText.slice(0, 200);
     }
   } catch { /* defaults are fine */ }
 })();
@@ -4196,7 +4221,28 @@ new MutationObserver(() => {
   navBar.finish();
   if (loadingTimer) { clearTimeout(loadingTimer); loadingTimer = null; }
 }).observe($app, { childList: true });
+// Registration state (1.1.10): the board can stop registrations, mark an
+// event sold out, or set a deadline - independent of the capacity maths.
+function regDeadlinePassed(ev) { const d = toDate(ev?.regDeadline); return !!d && d < new Date(); }
+function regClosedFor(ev) { return ev?.regClosed === true || regDeadlinePassed(ev); }
+// Value for a <input type="datetime-local"> in the browser's local time.
+function toLocalInput(ts) {
+  const d = toDate(ts);
+  if (!d) return "";
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+// Why an event isn't taking registrations right now (null = open).
+function regStateOf(ev) {
+  if (ev.cancelled) return { key: "cancelled", label: "Cancelled" };
+  if (ev.regClosed === true) return { key: "closed", label: "Closed by the board" };
+  if (regDeadlinePassed(ev)) return { key: "deadline", label: `Closed - deadline was ${fmtDate(ev.regDeadline)}` };
+  if (ev.soldOutManual === true) return { key: "soldout", label: "Marked sold out" };
+  if (ev.capacity && ticketsLeft(ev) === 0) return { key: "full", label: "Sold out (capacity reached)" };
+  return null;
+}
 function ticketsLeft(ev) {
+  if (ev.soldOutManual === true) return 0;
   if (!ev.capacity) return Infinity;
   // pendingHold = spots reserved by checkouts in progress (v0.130) - the
   // server refuses them anyway, so showing them as free just causes
@@ -4385,7 +4431,7 @@ async function calRequest(method, path, body, calId = calendarSync.calendarId) {
 }
 
 function calEventBody(ev) {
-  const soldOut = !!(ev.capacity && (ev.ticketsSold || 0) >= ev.capacity);
+  const soldOut = ev.soldOutManual === true || !!(ev.capacity && (ev.ticketsSold || 0) >= ev.capacity);
   const link = `${location.origin}/event/${ev.id}`;
   const startD = toDate(ev.start);
   const endD = ev.end ? toDate(ev.end) : new Date(startD.getTime() + 2 * 60 * 60 * 1000);
@@ -4731,7 +4777,7 @@ async function viewHome() {
         <span class="home-tile-main">
           <small>ESNcard</small>
           <strong>Member prices on every event and trip</strong>
-          <span class="form-hint">Apply in two minutes, pick it up at the office.</span>
+          <span class="form-hint">${goodieBagText() ? "Apply in two minutes, pick it up at the office - goodie bag included." : "Apply in two minutes, pick it up at the office."}</span>
         </span>
         <span class="chev">›</span>
       </a>` : ""}
@@ -4873,7 +4919,9 @@ function eventCard(ev) {
             ${!ev.options?.length && ev.price && ev.priceEsn != null ? `<span class="member-note">ESNcard ${fmtMoney(ev.priceEsn, ev.currency)}</span>` : ""}
             ${ev.esnOnly ? `<span class="badge badge-esn">ESNcard only</span>` : ""}
           </span>`}
-          ${!ev.cancelled && !ev.officeHours && soldOut
+          ${!ev.cancelled && !ev.officeHours && d > nowD && regClosedFor(ev) && ev.regMode !== "none" && ev.regMode !== "external"
+            ? `<span class="badge badge-soldout">Registrations closed</span> <a href="/event/${ev.id}" class="btn btn-sm btn-ghost btn-ink">Details ›</a>`
+            : !ev.cancelled && !ev.officeHours && soldOut
             ? `<span class="badge badge-soldout">Sold out</span> <a href="/event/${ev.id}" class="btn btn-sm btn-ghost btn-ink">Waitlist ›</a>`
             : `<a href="/event/${ev.id}" class="btn btn-sm" style="background:${accent};color:#fff">Details</a>`}
         </div>
@@ -5108,6 +5156,7 @@ async function viewEvent(id) {
             <li><span class="info-label">Where</span><span>${ev.location
               ? `<a href="${mapsUrlFor(ev)}" target="_blank" rel="noopener">${esc(ev.location)}</a>${ev.lat != null ? ` ${mi("location_on", "sm")}` : ""}`
               : "Location TBA"}</span></li>
+            ${ev.regDeadline && !regDeadlinePassed(ev) && regMode === "app" && !ev.regClosed ? `<li><span class="info-label">Register by</span><span><strong>${fmtDate(ev.regDeadline)} · ${fmtTime(ev.regDeadline)}</strong></span></li>` : ""}
             ${ev.capacity && regMode === "app" ? `<li><span class="info-label">Tickets</span><span>${soldOut ? "Sold out" : `${left} ticket${left === 1 ? "" : "s"} left`} (capacity ${ev.capacity})</span></li>` : ""}
             ${ev.albumUrl ? `<li><span class="info-label">Photos</span><span><a href="${esc(ev.albumUrl)}" target="_blank" rel="noopener">${mi("photo_library", "sm")} Photos from this event ${mi("arrow_outward", "sm")}</a></span></li>` : ""}
           </ul>
@@ -5185,6 +5234,9 @@ async function viewEvent(id) {
             ${isPast && myReg.checkedInAt ? `<a href="/rate/${myReg.id}" class="btn btn-ghost btn-block btn-ink">Rate this event ★</a>` : ""}`}
           `
           : isPast ? `<p class="form-hint">This event has already taken place.</p>`
+          : regClosedFor(ev) ? `
+            <span class="badge badge-soldout">Registrations closed</span>
+            <p class="form-hint" style="margin-top:8px">${ev.regClosed ? "The board has closed registrations for this event." : `Registration closed on ${fmtDate(ev.regDeadline)} at ${fmtTime(ev.regDeadline)}.`} Questions? <a href="/contact">Message the board</a>.</p>`
           : soldOut ? `
             <span class="badge badge-soldout">Sold out</span>
             ${currentUser
@@ -5346,7 +5398,7 @@ async function viewEvent(id) {
   // of a retry loop against a spot that isn't there.
   const capacityFail = (err) => {
     const msg = err?.message || "";
-    if (err?.code === "functions/resource-exhausted" || /tickets left|sold out|held for someone/i.test(msg)) {
+    if (err?.code === "functions/resource-exhausted" || /tickets left|sold out|held for someone|registrations .* closed/i.test(msg)) {
       toast(msg + " Showing the current availability…", "warn");
       viewEvent(ev.id);
       return true;
@@ -6092,9 +6144,9 @@ async function viewShop() {
           ? esncardShopTile("ESNcard - application received", "Free team card - pick it up during office hours.", "/office", "Office hours")
           : esncardShopTile("ESNcard - application received", `Almost there: pay ${fmtMoney(a2.price ?? cardPricing.student)} online from your account page${cashAllowed() ? ", or in cash during office hours" : ""}.`, "/account", "Finish payment");
       } else if (a2.status === "paid") {
-        cardTile = esncardShopTile("ESNcard - being prepared", "Paid ✓ - the board is preparing your card. You'll get an e-mail the moment it's ready for pickup.", "/account", "View status");
+        cardTile = esncardShopTile("ESNcard - being prepared", `Paid ✓ - the board is preparing your card. You'll get an e-mail the moment it's ready for pickup.${goodieBagText() ? ` ${esc(goodieBagText())}` : ""}`, "/account", "View status");
       } else if (a2.status === "active" && !a2.pickedUpAt) {
-        cardTile = esncardShopTile("Your ESNcard is ready for pickup!", "Come grab it at the office - your member prices already work in the app.", "/office", "Office hours");
+        cardTile = esncardShopTile("Your ESNcard is ready for pickup!", `Come grab it at the office - your member prices already work in the app.${goodieBagText() ? ` ${esc(goodieBagText())}` : ""}`, "/office", "Office hours");
       } else {
         cardTile = esncardShopTile("Renew your ESNcard", `Your card expired - renew for ${fmtMoney(cardPricing.student)} and keep the member prices.`, "/esncard", "Renew");
       }
@@ -6601,7 +6653,7 @@ async function viewOffice() {
 
         <h3 class="section-title sm">What you can do here</h3>
         <div class="office-tiles">
-          <div class="office-tile">${mi("badge")}<strong>ESNcard</strong><small>${cashAllowed() ? "Pick up your card, pay in cash if you didn't online." : "Pick up your card (paid online in the app)."} Bring proof of exchange.</small></div>
+          <div class="office-tile">${mi("badge")}<strong>ESNcard</strong><small>${cashAllowed() ? "Pick up your card, pay in cash if you didn't online." : "Pick up your card (paid online in the app)."} Bring proof of exchange.${goodieBagText() ? ` ${esc(goodieBagText())}` : ""}</small></div>
           <div class="office-tile">${mi("shopping_bag")}<strong>Shop orders</strong><small>Collect (and pay for) merch - show the order QR from <a href="/my-tickets">My tickets</a>.</small></div>
           <div class="office-tile">${mi("forum")}<strong>Questions &amp; a chat</strong><small>Events, trips, life in Ghent… come say hi.</small></div>
         </div>
@@ -6918,7 +6970,7 @@ function faqStudentItems() {
     ["What is the ESNcard and why would I want one?",
       `The ${fmtMoney(cardPricing.student)} membership card of the Erasmus Generation: member prices on ESN Gent events and trips, access to member-only events, plus <a href="https://www.esn.org/esncard" target="_blank" rel="noopener">100+ international deals</a>. Apply on <a href="/account">your account page</a> (2-minute form with proof of exchange) - submitting takes you straight to the <strong>secure online payment</strong>, or choose to pay cash during <a href="/office">office hours</a> instead. Pick your card up during <a href="/office">office hours</a> - it's activated on the spot and valid ${cardPricing.validityMonths} months.`],
     ["Where do I pick up my ESNcard or shop order?",
-      `Only at the ESN office during <a href="/office">office hours</a> - never at ESN events. Bring your proof of exchange for the ESNcard, or your order QR code for merch. ESNcard payments themselves are final and can't be cancelled - the only exception: if the board can't approve your application, anything you paid online is refunded automatically.`],
+      `Only at the ESN office during <a href="/office">office hours</a> - never at ESN events. Bring your proof of exchange for the ESNcard, or your order QR code for merch.${goodieBagText() ? ` ${esc(goodieBagText())}` : ""} ESNcard payments themselves are final and can't be cancelled - the only exception: if the board can't approve your application, anything you paid online is refunded automatically.`],
     ["How do I install the app on my phone?",
       `See the step-by-step <a href="/install">install page</a> - iPhone and Android each have their own 30-second recipe, plus how to turn on notifications per system. You get an app icon, full-screen mode and offline tickets.`],
     ["Can I add events to my own calendar?",
@@ -6973,6 +7025,10 @@ function viewFaq() {
       `Set an <strong>ESNcard price</strong> on the event (verified members pay it automatically), tick <strong>ESNcard only</strong> to restrict registration to verified members, or set <strong>max member spots</strong> to cap them.`],
     ["Where do I see who registered?",
       `Admin → the event → full list with status, check-ins and ticket types, plus <strong>Export CSV</strong>. The waitlist (with a copy-all-emails button) is below the registrations.`],
+    ["How do I stop registrations, mark an event sold out or set a deadline?",
+      `Admin → the event → the <strong>Registrations</strong> card at the top. <strong>Close registrations</strong>: nobody can buy or register, existing tickets stay valid, reopen whenever you like. <strong>Mark sold out</strong>: same, but students can join the waitlist and the first in line get an offer the moment you unmark it. <strong>Registration deadline</strong> (also in the event form): registrations close by themselves at that moment and the event page says 'Register by …' until then. All three are enforced by the server, not just hidden.`],
+    ["Students get a goodie bag with their ESNcard - where do we say that?",
+      `Admin → Settings → <strong>Goodie bag at pickup</strong> (treasurer/president): switch it on and write one line about what's in it. It shows on the application form, the account page, the shop tile and the office page, and the <code>{goodieBag}</code> placeholder in the 'card ready' e-mail fills in. Switch it off when the bags run out - every mention disappears at once.`],
     ["How do I verify someone's ESNcard?",
       `Admin → <strong>Users → ESNcard</strong>. <strong>To assign</strong> (default) lists everyone who paid: type the number on the physical card and press Enter - the app checks it on esncard.org (typos, duplicates, blocked cards), links it and e-mails the student. <strong>Office - unpaid</strong> lists people paying at the desk: click <strong>Paid?</strong>, confirm you received the money, then the card field appears. <strong>To pick up</strong>: one click on <strong>Handed over</strong> when you give them the card. <strong>Reject…</strong> asks for a reason the student sees and can fix; online payments are refunded automatically. <em>Details</em> under a name shows everything they filled in. Numbers and charts live under <strong>Insights → Members &amp; map</strong>; the treasurer/president adjust card prices under Settings → ESNcard, and the superadmin edits the "card ready" e-mail there too.`],
     ["How do I put office hours in the app?",
@@ -7542,6 +7598,7 @@ async function viewAccount() {
         ` : hasCard && application?.status === "active" && !application.pickedUpAt ? `
           <p class="acct-state"><span class="badge badge-paid">${mi("verified", "sm")} Active${p.esncardExpiresAt ? ` until ${fmtDate(p.esncardExpiresAt)}` : ""}</span> <span class="badge badge-requested">${mi("meeting_room", "sm")} physical card at the office</span></p>
           <p class="acct-note">Member prices already apply. Collect the plastic card <strong>${esc(application.cardNumber || "")}</strong> during <a href="/office">office hours</a> (never at events).</p>
+          ${goodieBagHtml("compact")}
         ` : hasCard ? `
           <p class="acct-state"><span class="badge badge-paid">${mi("verified", "sm")} ${p.esncardVerified === true ? "Active" : "Accepted"}${p.esncardExpiresAt ? ` until ${fmtDate(p.esncardExpiresAt)}` : ""}</span></p>
           <p class="acct-note">Member prices apply automatically - on events, trips and in the shop. <a href="/deals">Partner deals ›</a></p>
@@ -7557,9 +7614,11 @@ async function viewAccount() {
             <a href="/esncard-apply" class="btn btn-ghost btn-sm btn-ink">Edit application</a>
           </div>
           ${myCardPrice() > 0 ? `<p class="form-hint">Payments are final - refunded automatically only if the board can't approve the application.</p>` : ""}
+          ${goodieBagHtml("compact")}
         ` : application && application.status === "paid" ? `
           <p class="acct-state"><span class="badge badge-paid">${mi("check_circle", "sm")} Paid - number on its way</span></p>
           <p class="acct-note">As soon as the board assigns your card number you get an e-mail. Register it on <a href="https://esncard.org" target="_blank" rel="noopener">esncard.org</a>, then pick up the physical card at <a href="/office">office hours</a>.</p>
+          ${goodieBagHtml("compact")}
         ` : p.esncardCode && p.esncardStatus === "available" ? `
           <p class="acct-state"><span class="badge badge-requested">${mi("hourglass_top", "sm")} Linked - not activated yet</span></p>
           <p class="acct-note">Register card <strong>${esc(p.esncardCode)}</strong> on <a href="https://esncard.org" target="_blank" rel="noopener">esncard.org</a>, then tap Refresh - member prices switch on the moment it's active.</p>
@@ -7936,7 +7995,7 @@ async function viewEsncardApply() {
     <p class="form-hint" style="margin:-8px 0 14px">${renewal
       ? "Your previous card expired - check that everything below is still correct, submit, and you'll get a fresh card with a new number."
       : orphaned ? "Your previous card is no longer linked to this account - check that everything below is still correct and submit to apply for a new one."
-      : `Takes about two minutes. ${priceNow === 0 ? "Your card is free as a team member." : `The card costs <strong>${fmtMoney(priceNow)}</strong>${priceNow === cardPricing.volunteer && priceNow > 0 ? " (volunteer/alumni price)" : ""} and is valid ${cardPricing.validityMonths || 12} months.`} You pick it up at <a href="/office">office hours</a>.`}</p>
+      : `Takes about two minutes. ${priceNow === 0 ? "Your card is free as a team member." : `The card costs <strong>${fmtMoney(priceNow)}</strong>${priceNow === cardPricing.volunteer && priceNow > 0 ? " (volunteer/alumni price)" : ""} and is valid ${cardPricing.validityMonths || 12} months.`} You pick it up at <a href="/office">office hours</a>.${goodieBagText() ? ` ${esc(goodieBagText())}` : ""}`}</p>
     ${resubmit && a.declineReason ? `<div class="form-card" style="margin:0 0 14px;border-left:4px solid var(--esn-orange)"><p style="margin:0;font-size:.9rem"><strong>Why it was declined:</strong> ${esc(a.declineReason)}</p></div>` : ""}
     <form class="form-card" id="esncard-form" style="max-width:760px">
 
@@ -8051,6 +8110,7 @@ async function viewEsncardApply() {
               ? `Pay <strong>${fmtMoney(priceNow)}</strong> online now (card or Bancontact), or in cash when you pick the card up at <a href="/office">office hours</a>.`
               : `Pay <strong>${fmtMoney(priceNow)}</strong> online (card or Bancontact) - you're taken to the secure payment right after submitting. Pick up the card at <a href="/office">office hours</a>.`}</p></div>
         </div>
+        ${goodieBagHtml("compact")}
         <details class="form-optional" style="margin:0 0 14px">
           <summary class="form-hint" style="cursor:pointer">Optional: field of studies, how you found us, event ideas</summary>
           <div class="form-grid" style="margin-top:10px">
@@ -9292,9 +9352,21 @@ async function viewAdminSettings() {
         : `<p class="form-hint" style="margin-top:8px">Managed by the superadmin. Current tags: ${tags.length ? tags.map((t) => `<span class="badge" style="background:${esc(t.color || "#2E3192")};color:${readableOn(t.color || "#2E3192")}">${esc(t.name)}</span>`).join(" ") : "none yet"}</p>`}
     </div>
     <div class="form-card">
-      <strong>${mi("event_available", "sm")} Google Calendar sync</strong> ${hintIcon("Sync is fully automatic on every event/meeting change. This button is only for the one-time setup and for forcing a full re-push if the calendar ever looks out of date.")}
+      <strong>${mi("event_available", "sm")} Google Calendar sync</strong> ${hintIcon("Sync is fully automatic on every event/meeting change. Re-sync only for the one-time setup or if the calendar ever looks out of date.")}
+      ${isSuperUser ? `
+      <div class="form-field" style="margin-top:12px">
+        <label>Google account that writes the calendar</label>
+        <p class="form-hint" id="cal-auth-status" style="margin:0 0 8px">Checking…</p>
+        <div class="form-actions" style="margin:0;align-items:center;flex-wrap:wrap">
+          <input class="inline-input" id="cal-client-id" placeholder="OAuth web client ID (…apps.googleusercontent.com)" style="flex:1;min-width:260px" value="${esc(calendarSync?.clientId && !calendarSync.clientId.startsWith("PASTE") ? calendarSync.clientId : "")}" />
+          <button class="btn btn-sm btn-green" id="cal-auth-connect">${mi("link", "sm")} Connect Google account</button>
+          <button class="btn btn-sm btn-ghost btn-danger hidden" id="cal-auth-disconnect">Disconnect</button>
+        </div>
+        <p class="form-hint" style="margin:8px 0 0">Without a connected account, events are created by the functions' service account and Google shows "Created by: 8992…@developer.gserviceaccount.com" on every entry. Connect <strong>esn.gent@gmail.com</strong> once and new entries are created by that account. One-time setup: in Google Cloud → APIs &amp; Services → Credentials → the OAuth web client, add <code id="cal-redirect-uri">…</code> as an authorised redirect URI, then run <code>firebase functions:secrets:set GOOGLE_OAUTH_CLIENT_SECRET</code> with its client secret and redeploy the functions.</p>
+      </div>` : ""}
       <div class="form-actions" style="margin-top:10px">
         <button class="btn btn-ghost btn-sm btn-ink" id="btn-cal-sync">${mi("sync", "sm")} Force full re-sync</button>
+        ${isSuperUser ? `<button class="btn btn-ghost btn-sm btn-ink" id="btn-cal-recreate" title="Deletes and re-inserts every upcoming entry so the calendar shows the connected account as creator - do this once after connecting">${mi("autorenew", "sm")} Re-create upcoming events</button>` : ""}
       </div>
     </div>
 
@@ -9324,14 +9396,25 @@ async function viewAdminSettings() {
         <label for="cp-avail"><strong>Also accept "available" cards as members</strong> <span class="badge ${cardPricing.acceptAvailable ? "badge-pending" : "badge-esn"}">${cardPricing.acceptAvailable ? "FALLBACK ON" : "active only"}</span> ${hintIcon("Standard: only a card that is ACTIVE on esncard.org gives member prices and unlocks the passport, codex and guide. Switch this ON as a fallback when students can't register their card on esncard.org or the esncard.org API is down: a card that is linked but still 'available' then counts as a member card too (prices, ESNcard-only events, perks - app and server alike). Switch it back OFF once esncard.org works again. Superadmin only.")}</label>
       </div>` : ""}
     </div>
+    <div class="form-card">
+      <strong>${mi("redeem", "sm")} Goodie bag at pickup</strong> ${hintIcon("Switch ON when students get a goodie bag with their card. The line then shows on the application form, the account page, the shop tile and the office page, and fills the {goodieBag} placeholder in the 'card ready' e-mail. Switch OFF when the bags run out - every mention disappears at once.")}
+      <div class="checkbox-row" style="margin:12px 0 0">
+        <input type="checkbox" id="gb-on" ${cardPricing.goodieBag ? "checked" : ""} />
+        <label for="gb-on"><strong>Students get a goodie bag when they pick up their ESNcard</strong> <span class="badge ${cardPricing.goodieBag ? "badge-paid" : "badge-esn"}" id="gb-badge">${cardPricing.goodieBag ? "ON" : "off"}</span></label>
+      </div>
+      <div class="form-field" style="margin:10px 0 0"><label for="gb-text">What students read</label>
+        <input id="gb-text" maxlength="200" placeholder="${esc(GOODIE_DEFAULT_TEXT)}" value="${esc(cardPricing.goodieBagText || "")}" />
+        <p class="form-hint">One or two sentences, for example: "Your goodie bag with a tote bag, a city map and partner vouchers is waiting for you at the office." Leave it empty for the standard line.</p></div>
+      <div class="form-actions" style="margin-top:10px"><button class="btn btn-sm btn-green" id="gb-save">Save goodie bag</button></div>
+    </div>
     ${isSuperUser ? `
     <div class="form-card">
       <strong>${mi("mail", "sm")} "Card ready" e-mail</strong> ${hintIcon("Sent automatically the moment a card number is assigned to a student. Placeholders are filled in per student. Empty fields use the built-in text. Sending only happens while confirmation e-mails are enabled under System. Superadmin only.")}
       <div class="form-field" style="margin-top:12px"><label for="tpl-card-subject">Subject</label>
         <input id="tpl-card-subject" maxlength="150" placeholder="Your ESNcard number is ready" /></div>
       <div class="form-field"><label for="tpl-card-body">Message</label>
-        <textarea id="tpl-card-body" rows="9" placeholder="Hi {firstName},&#10;&#10;Good news - your ESNcard number is {cardNumber}.&#10;&#10;{activationNote}&#10;&#10;You can pick up the physical card during our office hours: {officeHours} (at the ESN office, never at events).&#10;&#10;Your card and barcode are already in the app under your profile.&#10;&#10;See you soon!&#10;The ESN Gent team"></textarea></div>
-      <p class="form-hint">Placeholders: <code>{firstName}</code> <code>{name}</code> <code>{cardNumber}</code> <code>{activationNote}</code> <code>{expires}</code> <code>{officeHours}</code> (office hours come from Organisation below). <strong>{activationNote}</strong> becomes a "register it on esncard.org" line for cards that aren't activated yet, or the validity date for active ones - keep it in your text.</p>
+        <textarea id="tpl-card-body" rows="9" placeholder="Hi {firstName},&#10;&#10;Good news - your ESNcard number is {cardNumber}.&#10;&#10;{activationNote}&#10;&#10;You can pick up the physical card during our office hours: {officeHours} (at the ESN office, never at events).&#10;&#10;{goodieBag}&#10;&#10;Your card and barcode are already in the app under your profile.&#10;&#10;See you soon!&#10;The ESN Gent team"></textarea></div>
+      <p class="form-hint">Placeholders: <code>{firstName}</code> <code>{name}</code> <code>{cardNumber}</code> <code>{activationNote}</code> <code>{expires}</code> <code>{officeHours}</code> <code>{goodieBag}</code> (office hours come from Organisation below, the goodie bag line from the switch above - empty when it's off). <strong>{activationNote}</strong> becomes a "register it on esncard.org" line for cards that aren't activated yet, or the validity date for active ones - keep it in your text.</p>
       <div class="form-actions">
         <button class="btn btn-sm btn-dark" id="tpl-card-save">Save template</button>
         <button class="btn btn-sm btn-ghost btn-ink" id="tpl-card-test">${mi("send", "sm")} Send me a preview</button>
@@ -9848,6 +9931,52 @@ async function viewAdminSettings() {
   });
 
   // ---- Google Calendar: force resync (setup happens here too) ----
+  // ---- Google account for the calendar (1.1.9) ----
+  const calAuthEl = document.getElementById("cal-auth-status");
+  const showCalAuth = (st) => {
+    if (!calAuthEl) return;
+    document.getElementById("cal-redirect-uri").textContent = st.redirectUri || "";
+    if (st.clientId) document.getElementById("cal-client-id").value = st.clientId;
+    document.getElementById("cal-auth-disconnect")?.classList.toggle("hidden", !st.connected);
+    document.getElementById("cal-auth-connect").innerHTML = `${mi("link", "sm")} ${st.connected ? "Reconnect" : "Connect Google account"}`;
+    calAuthEl.innerHTML = st.connected
+      ? (st.broken
+        ? `<span class="badge badge-soldout">connection broken</span> ${esc(st.email || "")} - Google refused the token (${esc((st.error || "").slice(0, 80))}). Reconnect; until then the service account is used.`
+        : `<span class="badge badge-paid">connected</span> ${esc(st.email || "Google account")}${st.connectedAt ? ` · since ${fmtDate(new Date(st.connectedAt))}` : ""} - new calendar entries are created by this account.`)
+      : `<span class="badge badge-requested">not connected</span> entries are created by the service account.${st.secretSet ? "" : " <strong>Client secret not set yet.</strong>"}`;
+  };
+  if (calAuthEl) {
+    httpsCallable(functions, "calendarAuth")({ action: "status" })
+      .then((r) => showCalAuth(r.data || {}))
+      .catch((err) => { calAuthEl.textContent = "Could not read the status: " + (err.message || ""); });
+    document.getElementById("cal-auth-connect").addEventListener("click", async (e) => {
+      const clientId = document.getElementById("cal-client-id").value.trim();
+      btnBusy(e.currentTarget, "Opening Google…");
+      try {
+        const r = await httpsCallable(functions, "calendarAuth")({ action: "start", clientId });
+        location.href = r.data.url; // Google consent → callback function → back here
+        return;
+      } catch (err) { toast(err.message || "Could not start.", "error"); }
+      btnIdle(e.currentTarget);
+    });
+    document.getElementById("cal-auth-disconnect").addEventListener("click", async (e) => {
+      if (!await appConfirm("Disconnect the Google account? The sync keeps working through the service account.", { okLabel: "Disconnect", cancelLabel: "Keep", danger: true })) return;
+      btnBusy(e.currentTarget, "…");
+      try { await httpsCallable(functions, "calendarAuth")({ action: "disconnect" }); toast("Disconnected.", "success"); showCalAuth({ connected: false, redirectUri: document.getElementById("cal-redirect-uri").textContent, secretSet: true }); }
+      catch (err) { toast(err.message || "Failed.", "error"); }
+      btnIdle(e.currentTarget);
+    });
+  }
+  document.getElementById("btn-cal-recreate")?.addEventListener("click", async (e) => {
+    if (!await appConfirm("Delete and re-insert every upcoming event and board meeting on the Google calendars? Subscribers keep seeing them (new entries appear within minutes); the creator becomes the connected account.", { okLabel: "Yes, re-create", cancelLabel: "No" })) return;
+    btnBusy(e.currentTarget, "Re-creating…");
+    try {
+      const res = await httpsCallable(functions, "syncCalendarAll")({ recreate: true });
+      const { synced, failed } = res.data || {};
+      toast(failed?.length ? `${synced} re-created, ${failed.length} failed - see the error log.` : `${synced} calendar entr${synced === 1 ? "y" : "ies"} re-created.`, failed?.length ? "error" : "success");
+    } catch (err) { toast("Failed: " + (err.message || ""), "error"); }
+    btnIdle(e.currentTarget);
+  });
   document.getElementById("btn-cal-sync")?.addEventListener("click", async (e) => {
     if (!calendarSync?.calendarId) {
       toast("Calendar sync isn't set up yet - add the calendar IDs in calendar-config.js", "error");
@@ -10024,11 +10153,32 @@ async function viewAdminSettings() {
       const cashEnabled = cashEl ? cashEl.checked : cardPricing.cashEnabled === true;
       await setDoc(doc(db, "settings", "esncard"), {
         priceStudent: s, priceVolunteer: v, validityMonths: months, proofRequired, acceptAvailable, cashEnabled,
+        goodieBag: cardPricing.goodieBag === true, goodieBagText: cardPricing.goodieBagText || "",
         updatedBy: currentUser.uid, updatedByName: currentUser.displayName || "",
         updatedAt: serverTimestamp(),
       });
       cardPricing.student = s; cardPricing.volunteer = v; cardPricing.validityMonths = months; cardPricing.proofRequired = proofRequired; cardPricing.acceptAvailable = acceptAvailable; cardPricing.cashEnabled = cashEnabled;
       toast(`ESNcard settings saved: ${fmtMoney(s)} student · ${fmtMoney(v)} volunteer/alumni · valid ${months} months · proof ${proofRequired ? "required" : "OFF (welcome-week mode)"}${cashEl ? ` · cash at the office ${cashEnabled ? "ON" : "OFF (online only)"}` : ""}${availEl ? ` · ${acceptAvailable ? "FALLBACK: available cards count as members (server picks it up within a minute)" : "active cards only"}` : ""}.`, acceptAvailable ? "warn" : "success");
+    } catch (err) { toast("Save failed: " + err.message, "error"); }
+    e.target.disabled = false;
+  });
+
+  // ---- Goodie bag (1.1.10) ----
+  document.getElementById("gb-save")?.addEventListener("click", async (e) => {
+    const on = document.getElementById("gb-on").checked;
+    const text = document.getElementById("gb-text").value.trim().slice(0, 200);
+    e.target.disabled = true;
+    try {
+      // merge: prices and switches stay as they are (the rule still checks them)
+      await setDoc(doc(db, "settings", "esncard"), {
+        priceStudent: cardPricing.student, priceVolunteer: cardPricing.volunteer,
+        goodieBag: on, goodieBagText: text,
+        updatedBy: currentUser.uid, updatedByName: currentUser.displayName || "", updatedAt: serverTimestamp(),
+      }, { merge: true });
+      cardPricing.goodieBag = on; cardPricing.goodieBagText = text;
+      const badge = document.getElementById("gb-badge");
+      if (badge) { badge.textContent = on ? "ON" : "off"; badge.className = `badge ${on ? "badge-paid" : "badge-esn"}`; }
+      toast(on ? `Goodie bag ON - students now read: "${goodieBagText()}"` : "Goodie bag OFF - the mentions are gone and the e-mail placeholder stays empty.", "success");
     } catch (err) { toast("Save failed: " + err.message, "error"); }
     e.target.disabled = false;
   });
@@ -11767,7 +11917,11 @@ async function viewAdminList(yearSel = ayStartYear()) {
         : ev.price ? fmtMoney(ev.price, ev.currency) : "Free"}</td>
       <td data-l="Sold" data-sold="${ev.id}">${soldText(ev)}</td>
       <td data-l="Attendance" data-att="${ev.id}">${attText(ev)}</td>
-      <td data-l="Status"><span class="badge badge-${ev.published ? "published" : "draft"}">${ev.published ? "published" : "draft"}</span></td>
+      <td data-l="Status"><span class="badge badge-${ev.published ? "published" : "draft"}">${ev.published ? "published" : "draft"}</span>${(() => {
+        const st = ev.cancelled ? { key: "cancelled" }
+          : ev.regMode === "none" || ev.regMode === "external" || toDate(ev.start) < new Date() ? null : regStateOf(ev);
+        return st && st.key !== "full" ? ` <span class="badge badge-soldout">${st.key === "soldout" ? "sold out" : st.key === "cancelled" ? "cancelled" : "closed"}</span>` : "";
+      })()}</td>
       <td style="white-space:nowrap" class="card-actions">
         <a class="btn btn-sm btn-dark" href="/admin/event-${ev.id}">Registrations</a>
         <a class="btn btn-sm btn-orange" href="/admin/edit-${ev.id}">Edit</a>
@@ -12125,6 +12279,9 @@ async function viewAdminEventForm(eventId, dupFromId) {
       delete prefill.googleEventId;
       delete prefill.dsaActivityId; // copy must NOT inherit the original's DSA activity (a PUT would overwrite it)
       delete prefill.lastInMarked;
+      delete prefill.regDeadline;   // a copy starts open - the old deadline would close it at once
+      delete prefill.regClosed;
+      delete prefill.soldOutManual;
     }
   }
   const f = ev || prefill; // field prefill (edit or duplicate)
@@ -12206,6 +12363,10 @@ async function viewAdminEventForm(eventId, dupFromId) {
           <div class="form-field">
             <label for="f-capacity">${mi("groups", "sm")} Capacity ${hintIcon("Total tickets available. Leave blank for unlimited.")}</label>
             <input id="f-capacity" type="number" min="1" placeholder="unlimited" value="${f?.capacity || ""}" />
+          </div>
+          <div class="form-field">
+            <label for="f-regdeadline">${mi("event_busy", "sm")} Registration deadline ${hintIcon("Optional. Registrations close automatically at this moment (Belgian time) - for trips with a booking cut-off, dinners with a headcount, … Leave blank to keep registrations open until the event starts. You can also close or mark sold out by hand on the event's admin page at any time.")}</label>
+            <input id="f-regdeadline" type="datetime-local" value="${toLocal(f?.regDeadline)}" />
           </div>
           <div class="form-field full">
             <div class="checkbox-row">
@@ -12655,6 +12816,7 @@ async function viewAdminEventForm(eventId, dupFromId) {
       start: Timestamp.fromDate(new Date(startVal)),
       end: endVal ? Timestamp.fromDate(new Date(endVal)) : null,
       capacity: regMode === "app" && Number.isFinite(capVal) && capVal > 0 ? capVal : null,
+      regDeadline: regMode === "app" && document.getElementById("f-regdeadline").value ? Timestamp.fromDate(new Date(document.getElementById("f-regdeadline").value)) : null,
       price: Math.max(0, Math.round((Number.isFinite(priceEur) ? priceEur : 0) * 100)),
       priceEsn: (() => {
         // "Free for ESNcard members" in the essentials wins; otherwise the
@@ -12855,6 +13017,7 @@ async function viewAdminEventDetail(eventId) {
       <button class="btn btn-dark btn-sm" id="btn-csv">Export CSV</button>
       ${!ev.cancelled && !isPastEvent ? `<button class="btn btn-ghost btn-sm btn-danger" id="btn-cancel-event" style="margin-left:auto">Cancel event…</button>` : ""}
     </div>
+    <div id="ed-regctl"></div>
     <div id="ed-stats"></div>
     <div id="ed-cash"></div>
     ${eventFeedback.length ? `
@@ -12921,6 +13084,68 @@ async function viewAdminEventDetail(eventId) {
         renderStats();
       } catch (err) { toast("Failed: " + err.message, "error"); e2.target.disabled = false; }
     });
+  };
+
+  // Registration controls (1.1.10): close/reopen, sold out, deadline -
+  // independent of the capacity maths and enforced by the server as well.
+  const renderRegCtl = () => {
+    const box = document.getElementById("ed-regctl");
+    if (!box) return;
+    if (ev.cancelled || isPastEvent || ev.regMode === "none" || ev.regMode === "external") { box.innerHTML = ""; return; }
+    const st = regStateOf(ev);
+    const open = !st;
+    const deadlineD = toDate(ev.regDeadline);
+    box.innerHTML = `
+      <div class="form-card regctl">
+        <div class="regctl-head">
+          <strong>${mi("how_to_reg", "sm")} Registrations</strong>
+          <span class="badge ${open ? "badge-paid" : "badge-soldout"}">${open ? "Open" : esc(st.label)}</span>
+          ${open && deadlineD ? `<span class="form-hint">closes ${fmtDate(deadlineD)} at ${fmtTime(deadlineD)}</span>` : ""}
+        </div>
+        <div class="form-actions regctl-row">
+          ${ev.regClosed === true
+            ? `<button class="btn btn-sm btn-green" id="rc-open">${mi("lock_open", "sm")} Reopen registrations</button>`
+            : `<button class="btn btn-sm btn-ghost btn-danger" id="rc-close">${mi("lock", "sm")} Close registrations</button>`}
+          ${ev.soldOutManual === true
+            ? `<button class="btn btn-sm btn-green" id="rc-unsold">${mi("undo", "sm")} Unmark sold out</button>`
+            : `<button class="btn btn-sm btn-ghost btn-danger" id="rc-sold">${mi("block", "sm")} Mark sold out</button>`}
+        </div>
+        <div class="form-actions regctl-row" style="align-items:flex-end">
+          <div class="form-field" style="margin:0"><label for="rc-deadline">Registration deadline ${hintIcon("Optional. Registrations close by themselves at this moment (Belgian time) - until then the event page says 'Register by …'. Remove it to keep registrations open until the event starts.")}</label>
+            <input id="rc-deadline" type="datetime-local" value="${toLocalInput(ev.regDeadline)}" /></div>
+          <button class="btn btn-sm btn-dark" id="rc-deadline-save">Save deadline</button>
+          ${deadlineD ? `<button class="btn btn-sm btn-ghost btn-ink" id="rc-deadline-clear">Remove deadline</button>` : ""}
+        </div>
+        <p class="form-hint" style="margin:8px 0 0">Closed or sold out: the event stays visible, the buy button disappears and the server refuses new tickets - people who already have one keep it. Sold out also opens the waitlist; the moment you unmark it, the first in line get their offer.</p>
+      </div>`;
+    const save = async (patch, msg, action) => {
+      try {
+        await updateDoc(doc(db, "events", ev.id), patch);
+        Object.assign(ev, patch);
+        logAudit(action, "event", ev.title, ev.id);
+        toast(msg, "success");
+        renderRegCtl();
+        renderStats();
+      } catch (err) { toast("Failed: " + (err.message || ""), "error"); }
+    };
+    document.getElementById("rc-close")?.addEventListener("click", async () => {
+      if (!await appConfirm(`Close registrations for "${ev.title}"? Nobody can buy or register from now on - existing tickets stay valid. You can reopen at any time.`, { okLabel: "Close registrations", danger: true })) return;
+      save({ regClosed: true }, "Registrations closed.", "closed registrations");
+    });
+    document.getElementById("rc-open")?.addEventListener("click", () => save({ regClosed: false }, "Registrations open again.", "reopened registrations"));
+    document.getElementById("rc-sold")?.addEventListener("click", async () => {
+      if (!await appConfirm(`Mark "${ev.title}" as sold out? The buy button makes way for the waitlist until you unmark it.`, { okLabel: "Mark sold out", danger: true })) return;
+      save({ soldOutManual: true }, "Marked as sold out.", "marked sold out");
+    });
+    document.getElementById("rc-unsold")?.addEventListener("click", () => save({ soldOutManual: false }, "No longer marked sold out.", "unmarked sold out"));
+    document.getElementById("rc-deadline-save")?.addEventListener("click", () => {
+      const v = document.getElementById("rc-deadline").value;
+      if (!v) { save({ regDeadline: null }, "Deadline removed.", "removed registration deadline"); return; }
+      const d = new Date(v);
+      if (Number.isNaN(d.getTime())) { toast("That date doesn't look right.", "error"); return; }
+      save({ regDeadline: Timestamp.fromDate(d) }, d < new Date() ? "Deadline saved - it is already past, so registrations are closed now." : `Deadline saved: ${fmtDate(d)} at ${fmtTime(d)}.`, "set registration deadline");
+    });
+    document.getElementById("rc-deadline-clear")?.addEventListener("click", () => save({ regDeadline: null }, "Deadline removed.", "removed registration deadline"));
   };
 
   const regMatches = (r) => {
@@ -13032,6 +13257,7 @@ async function viewAdminEventDetail(eventId) {
     });
   };
 
+  renderRegCtl();
   renderStats();
   renderRegs();
   renderWaitlist();

@@ -2,7 +2,7 @@
 
 The event, ticketing & membership platform of **ESN Gent** — built for ~1,500 international students per year.
 
-**Live:** https://app.esngent.org · Current version: **v1.1.8**
+**Live:** https://app.esngent.org · Current version: **v1.1.10**
 
 ## What it does
 
@@ -62,7 +62,7 @@ firebase deploy --only functions,hosting,firestore,storage
 Server secrets live in **Firebase Secret Manager**, never in this repo:
 
 ```
-STRIPE_SECRET_KEY   STRIPE_WEBHOOK_SECRET   GEMINI_API_KEY   SMTP_PASSWORD   DSA_API_KEY   ESNCARD_BYPASS_KEY
+STRIPE_SECRET_KEY   STRIPE_WEBHOOK_SECRET   GEMINI_API_KEY   SMTP_PASSWORD   DSA_API_KEY   ESNCARD_BYPASS_KEY   GOOGLE_OAUTH_CLIENT_SECRET
 ```
 
 Set one with `firebase functions:secrets:set NAME`, then redeploy functions.
